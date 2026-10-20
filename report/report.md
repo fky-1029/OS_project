@@ -248,8 +248,37 @@ OS 可以通过启动时由固件或引导程序提供的硬件描述，获取�
 
 ### 任务一：理解first-fit 连续物理内存分配算法
 
-**负责人：** [学号-姓名]
+**负责人：** 2413396-范珂祎
 
+本任务是理解题，不涉及代码修改与提示词生成。通过阅读 [code/kern/mm/default_pmm.c](../code/kern/mm/default_pmm.c)，理解 First-Fit 分配器如何初始化空闲页、分配连续物理页、回收页面并合并相邻空闲块。
+
+#### 模块功能描述
+
+First-Fit 用一条按物理地址升序排列的双向链表 `free_list` 组织所有空闲块，并用 `nr_free` 记录空闲页总数。每个空闲块由地址最低的 `Page`（头页）代表：头页的 `PG_property` 标志位为 1，`property` 字段记录本块包含的页数；块内其余页的 `property` 恒为 0。链表按地址升序，是为了让回收时能在 O(1) 内定位相邻块进行合并。
+
+#### 核心函数说明
+
+**`default_init`：初始化分配器状态。**
+`list_init(&free_list)` 将空闲链表初始化为空，`nr_free` 置 0。它由 `init_pmm_manager()` 在 `page_init()` 之前调用，让分配器处于「没有任何空闲页」的初始状态。
+
+**`default_init_memmap`：登记一段连续空闲区。**
+`page_init()` 建立页描述符后，把描述符数组之后的连续空闲页交给 `init_memmap(base, n)`。它逐页断言这些页已被标记为保留（这是 `page_init` 设置的），然后清空 `flags`、`property` 与 `ref`；只把头页的 `property` 设为 `n` 并打上 `PG_property`，其余页保持 `property = 0`；最后按地址升序插入 `free_list`，`nr_free += n`。
+
+**`default_alloc_pages`：First-Fit 分配。**
+这是「first」的体现。它先判断 `n > nr_free` 则返回 NULL；否则从头遍历 `free_list`，取第一个 `property >= n` 的空闲块，不比较哪个更合适。若块大小正好等于 `n`，整块从链表删除；若块比需求大，把低地址端 `n` 页分配出去，剩余 `property - n` 页在 `page + n` 处成为新块，插回原位置保持地址升序。最后 `nr_free -= n`、`ClearPageProperty(返回头页)`。
+
+**`default_free_pages`：回收并合并相邻空闲块。**
+它逐页断言「非保留、非空闲块头」后清空标志，把头页 `property` 设为 `n` 并插入链表，`nr_free += n`。随后先与低地址邻块合并（若 `p + p->property == base`，说明两段物理地址相邻），再与高地址邻块合并（若 `base + base->property == p`），被并进的头页 `ClearPageProperty` 并从链表删除。用指针差判断相邻利用了 `Page` 数组连续分配这一事实。
+
+#### First-Fit 是否有进一步的改进空间？（思考题回答）
+
+有，主要体现在外部碎片与查找开销：
+
+1. **外部碎片**：每次从低地址端切割，反复分配与释放后，低地址区域堆积大量「切剩的小碎块」，导致后续大块分配需要扫描更远，甚至总量足够却找不到连续块。
+2. **查找是 O(n) 线性扫描**：空闲块越多，分配越慢。可用按地址或大小索引的平衡树把查找降到 O(log n)，或采用分离空闲链表（segregated free lists）按大小分级。
+3. **头部磨损与局部性差**：每次都从链表头开始找，头部区域被反复切割，碎片集中且缓存局部性不佳。
+
+可选的改进方向包括 Best-Fit（选最贴合、剩余最小的块）、Next-Fit（从上次位置继续搜索）、Buddy System（按 2 的幂拆分与快速合并，从根本上控制外部碎片）以及 SLUB（对小对象单独管理，避免页级浪费）。本实验后续任务二实现 Best-Fit，正是对 First-Fit 选择策略的一次改进。
 
 ---
 
