@@ -110,6 +110,7 @@ Best-Fit 与 First-Fit 的区别只在 alloc_pages 的选择策略；初始化�
 7. 不改动 basic_check() 与 best_fit_check()，最终 best_fit_check() 通过。best_fit_check() 中的断言 p0 + 4 == p1 用于区分 Best-Fit 与 First-Fit，应原样通过。
 ````
 
+
 ## 功能模块二任务三
 
 **2413406-黄婉文**
@@ -257,8 +258,8 @@ Makefile：把 buddy_system_pmm.o 加入编译，使新增模块参与链接。
 
 ````
 
-### Prompt 2：实现buddy_check()测试函数
 
+### Prompt 2：实现buddy_check()测试函数
 
 ````markdown
 
@@ -276,6 +277,8 @@ mmu.h: PGSIZE, PGSHIFT
 riscv.h: DRAM_BASE
 memlayout.h: PG_reserved, PG_property
 pmm.h: alloc_page(), alloc_pages(n), free_page(page), free_pages(base, n), nr_free_pages()
+defs.h: NULL、size_t、uintptr_t、ppn_t、ROUNDUP、ROUNDDOWN
+// 注：defs.h 中 bool 的定义是 typedef int bool，没有 true / false，也没有 <stdbool.h>
 
 // 数据结构
 memlayout.h: struct Page {
