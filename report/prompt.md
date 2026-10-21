@@ -375,4 +375,203 @@ Buddy 管理器已初始化，init_memmap 已登记空闲页；当前 pmm_manage
 
 ### Prompt 1：slub算法代码实现
 
+````markdown
+
+[PROMPT]
+**任务：** 参考现有 ucore 物理内存管理框架，从零生成简化版 SLUB 内存对象分配模块并接入内核。在 kern/mm 文件夹下新增 slub.h、slub.c 文件，实现对象缓存层：向当前 pmm_manager 申请整页作为 slab，把 slab 切分成固定大小的对象，用空闲对象内部的前几个字节存放 freelist 指针，对外提供 slub_alloc / slub_free 接口。Makefile 中把 slub.o 加入编译，使新增模块参与链接。
+
+**操作要求：** 你必须在项目中修改和新增实际文件，生成可运行的代码，完成 SLUB 对象缓存层的实现。不要修改 default_pmm.c、best_fit_pmm.c、buddy_system_pmm.c 以及 struct pmm_manager 的接口定义，包括 page_init()、alloc_pages()、free_pages()、nr_free_pages()、check_alloc_page() 等函数的转发逻辑。
+
+**输出要求：** 直接进行文件操作，保留文件中的现有代码，实现或修改的代码应插入或更新到相应的位置，不要引入无关功能和不必要的函数，除非必需的辅助函数。使用下面 [RELY]、[GUARANTEE]、[SPECIFICATION] 部分的信息。
+
+[RELY]
+以下为完成任务可能所需的上下文信息，包括宏定义、数据结构、可调用的函数、相关全局变量等，包括但不限于：
+
+// 宏定义
+mmu.h: PGSIZE, PGSHIFT
+memlayout.h: PG_reserved, PG_property
+pmm.h: alloc_page(), free_page(page)
+
+// 数据结构
+memlayout.h: struct Page {
+int ref;
+uint64_t flags;
+unsigned int property;
+list_entry_t page_link;
+};
+list.h: list_entry_t
+pmm.h: struct pmm_manager
+
+// 可用函数
+pmm.h: alloc_pages(n), free_pages(base, n), nr_free_pages()
+pmm.h: page2ppn(page), page2pa(page), pa2page(pa)
+
+// 全局变量
+pmm.h: pages, npage, nbase, pmm_manager
+// alloc_pages(n) 返回 struct Page *，即 slab 首页描述符
+// page2pa(page) 给出物理地址
+// nbase = DRAM_BASE / PGSIZE，pages[0] 对应物理页号 nbase
+
+// 注：slub 只调用 alloc_pages / free_pages，不直接操作 Page 的 flags 和 property 字段
+
+
+[GUARANTEE]
+要新增的接口如下：
+
+kern/mm/slub.h 必须声明：
+void slub_init(void);
+void *slub_alloc(size_t size);
+void slub_free(void *ptr);
+
+kern/mm/slub.c 必须实现：
+void slub_init(void);
+void *slub_alloc(size_t size);
+void slub_free(void *ptr);
+
+定义size class 数组和 slub_cache 结构体，覆盖 16、32、64、128、256、512、1024、2048、4096 字节，一个size class对应一组 slub_cache；最大支持对象大小 4096 字节，超过返回 NULL。
+
+slub_init：初始化所有 size class 的 cache，包括 object_size、total_size、objects_per_slab 和 freelist，不向 pmm_manager 申请任何页。
+
+slub_alloc：按 size 找到对应 cache，从 freelist 头部摘取一个对象返回；freelist 为空时向 alloc_pages(1) 申请一页，切分为 objects_per_slab 个对象串成 freelist，再摘取一个返回；分配失败返回 NULL。
+
+slub_free：由 ptr 恢复出所属 cache 和对象起始地址，把对象头插回 freelist；ptr 为 NULL 时不做任何操作。
+
+要修改的现有接口：
+Makefile 中把 slub.o 加入编译，使新增模块参与链接。
+
+你可以根据需要添加：
+
+- 辅助函数（建议设为 static，只在本模块内部使用，不应该改变公开接口）
+- 内部使用的宏定义
+- 模块内部的静态变量
+
+
+[SPECIFICATION]
+以下为每个函数的行为规格：
+
+struct slub_cache 与 size class：
+**Pre-Condition: ** 模块内部有一个 size class 数组，覆盖 16 到 4096 字节的 2 的幂。
+
+**Post-Condition: ** 每个 size class 对应一个 slub_cache；object_size 等于该 size class 的用户数据区大小；total_size 包含对象管理元数据和用户数据区并按 8 字节对齐；objects_per_slab 等于 PGSIZE 除以 total_size 向下取整且至少为 1；freelist 初始为空。
+
+slub_init：
+**Pre-Condition: ** pmm_manager 已初始化，alloc_pages / free_pages 可用。
+
+**Post-Condition: ** 所有 size class 的 cache 被初始化，freelist 为空，尚未向 pmm_manager 申请页。
+
+slub_alloc：
+**Pre-Condition: ** size > 0，size 不超过最大 size class。
+
+**Post-Condition: ** 成功时返回至少 size 字节的对象地址，返回对象已从对应 cache 的 freelist 摘除；失败时返回 NULL。
+
+**Case 1：对应 cache 的 freelist 非空**
+
+从 freelist 头部摘下对象，返回用户数据区地址。
+
+**Case 2：对应 cache 的 freelist 为空，且 alloc_pages(1) 成功**
+
+把新 slab 切分为 objects_per_slab 个对象，串成 freelist，再从中摘取一个返回。
+
+**Case 3：对应 cache 的 freelist 为空，且 alloc_pages(1) 失败**
+
+返回 NULL，不修改 freelist，不增加任何计数。
+
+**Case 4：size 超过最大 size class**
+
+返回 NULL。
+
+slub_free：
+**Pre-Condition: ** ptr 是之前由 slub_alloc 返回的地址，ptr 非空。
+
+**Post-Condition: ** 对象被归还到其所属 cache 的 freelist 头部；页级空闲计数不变；不产生重复节点，不产生跨 cache 的错挂。
+
+**Case 1：正常释放**
+
+从 ptr 恢复出对象起始地址和所属 cache，把对象头插回 freelist。
+
+**Case 2：ptr 为 NULL**
+
+不做任何操作。
+
+````
+
 ### Prompt 2：实现测试函数
+
+````markdown
+
+[PROMPT]
+**任务：** 完善 kern/mm/slub.c 中的 slub_check() 函数，设计并实现完整的 SLUB 测试用例，验证 slub_init、slub_alloc、slub_free 在不同大小对象上的分配和释放是否正确。测试失败时通过 assert 终止；测试通过时尽量释放已分配对象，恢复测试前的空闲状态。在 kern/init/init.c 的 kern_init() 中 pmm_init() 之后增加一行 slub_check() 调用，用于触发 SLUB 模块，并保证 make qemu 时能看到 slub_check 的输出。
+
+**操作要求：** 在 kern/mm/slub.c 中实现 slub_check() 及必要的 static 辅助测试函数，每种情况的测试都要有断言；不要修改 slub_init、slub_alloc、slub_free 及 slub_new_slab 的实现，不要修改 default_pmm.c、best_fit_pmm.c、buddy_system_pmm.c、pmm.h、pmm.c 的转发逻辑。可以阅读 default_check 或 best_fit_check 了解测试写法，但 slub_check 必须自己设计用例，不得直接复用。
+
+**输出要求：** 直接进行文件操作，保留现有代码，只新增 slub_check() 及static辅助测试函数，不要引入无关功能。使用下面 [RELY]、[GUARANTEE]、[SPECIFICATION] 部分的信息。
+
+[RELY]
+以下为完成任务可能所需的上下文信息：
+
+// 宏定义
+mmu.h: PGSIZE, PGSHIFT
+pmm.h: alloc_page(), free_page(page)
+
+// 数据结构
+kern/mm/slub.h: struct slub_cache {
+    size_t object_size;
+    size_t total_size;
+    size_t objects_per_slab;
+    void *freelist;
+};
+
+// 可用函数
+kern/mm/slub.h: slub_init(), slub_alloc(size), slub_free(ptr)
+pmm.h: nr_free_pages()
+stdio.h: cprintf
+
+// 测试约束
+slub_check 中只能通过 slub_alloc / slub_free 访问对象分配接口，通过 nr_free_pages() 观察页级空闲变化
+不要直接调用 alloc_pages / free_pages
+
+
+[GUARANTEE]
+必须实现或完善的接口：
+void slub_check(void);
+
+允许新增：
+- static 辅助测试函数，只在本模块内部使用；
+- 测试辅助宏；
+- 测试辅助静态变量。
+
+
+[SPECIFICATION]
+
+## slub_check
+
+**Pre-Condition:**
+当前 pmm_manager 可用，nr_free_pages() 可调用；slub 模块可能已初始化或未初始化。
+
+**Post-Condition:**
+先调用 slub_init 确保模块已初始化；执行一组对象级分配释放测试，覆盖不同 size class；所有测试通过时，尽量释放所有已分配对象，恢复 slub 的空闲状态；任一测试失败时通过 assert 终止。
+
+测试必须覆盖包括但不限于以下情况：
+
+**Case 1：所有 size class 分配释放**
+- 对 16、32、64、128、256、512、1024、2048、4096 每个 size class 分别分配一个对象，检查返回非空、地址按 8 字节对齐；
+- 对每个对象写入特征值再读回，检查写入成功；
+- 释放后再次分配同 size class 对象，检查能复用；
+- 全部释放后检查页级空闲计数与测试前一致。
+
+**Case 2：跨 size class 隔离**
+- 连续分配 16、64、256、1024、4096 字节对象各一个，检查返回非空、地址互不重叠；
+- 对每个对象写入不同特征值再读回，检查互不覆盖；
+- 释放其中一个，检查其他对象内容不变。
+
+**Case 3：freelist 耗尽触发新 slab**
+- 对 32 字节 size class 连续分配超过 objects_per_slab 个对象，检查返回非空；
+- 检查页级空闲计数相应减少，说明 slub 向 pmm_manager 申请了新的页；
+- 全部释放后检查页级空闲计数恢复。
+
+**Case 4：边界情况**
+- 请求 0 字节返回 NULL；
+- 请求 8192 字节返回 NULL；
+- slub_free(NULL) 不崩溃、不改变 freelist 和页级计数。
+
+````
