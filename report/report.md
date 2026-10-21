@@ -6,9 +6,8 @@
 |------|------|
 | **实验名称** | Lab 2: 物理内存和页表 |
 | **小组成员** | 2413396-范珂祎、2413406-黄婉文、2413671-吕旭婧 |
-| **完成日期** | 待全组完成后填写 |
+| **完成日期** | 2026-10-21 |
 
-本稿记录成员 A 已实现和验证的内容。其他成员已有信息与章节予以保留，未填写的模板部分不表示任务已经完成。
 
 ### 小组分工
 
@@ -18,15 +17,15 @@
 |------|----------------|
 | 2413396-范珂祎 | 功能模块二任务一（First-Fit 理解）、任务二（Best-Fit 实现） |
 | 2413406-黄婉文 | 功能模块二任务三，模块二扩展任务challenge，分支任务gdb调试 |
-| 2413671-吕旭婧 | 模块一物理内存初始化，以及后续报告整合 |
+| 2413671-吕旭婧 | 模块一物理内存初始化以及后续报告整合 |
 
 实验报告分工：
 
 | 成员 | 负责的部分 |
 |------|----------------|
-| 2413396-范珂祎 | 模块二任务一、任务二的说明、规格与提示词、验证 |
-| 2413406-黄婉文 | 实验目的，模块二任务三、扩展任务，分支任务 |
-| 2413671-吕旭婧 | 模块一说明、规格与提示词、验证、模块一 Challenge，以及全章材料整合 |
+| 2413396-范珂祎 | 模块二任务一，任务二的说明、规格与提示词、验证 |
+| 2413406-黄婉文 | 实验目的，模块二任务三、扩展任务，分支任务，实验报告修改 |
+| 2413671-吕旭婧 | 模块一说明、规格与提示词、验证、模块一 Challenge，材料整合 |
 
 ---
 
@@ -49,26 +48,12 @@
 | 成员 | AI 编程工具 | 底层模型 | 备注 |
 |------|------------|---------|------|
 | 2413396-范珂祎 | Claude Code（终端 Agent） | Claude Fable 5 | |
-| 2413406-黄婉文 | Codex CLI + VS Code | DeepSeek-V4.1-Flash | 无 |
-| 2413671-吕旭婧 | Codex Desktop | GPT-6 | 通过 SSH 操作 Ubuntu 虚拟机；本次实验未更换模型 |
+| 2413406-黄婉文 | DeepSeek Harness | DeepSeek-V4.1-Flash | |
+| 2413671-吕旭婧 | Codex Desktop | GPT-6 | |
 
 **说明：**
 - **AI 编程工具**：指具体使用的终端工具、编辑器插件、桌面应用或浏览器界面
 - **底层模型**：指该工具使用的大语言模型及版本
-
-成员 A 实际使用的运行环境如下，不代表其他成员的环境配置：
-
-| 项目 | 成员 A 的实际配置 |
-|------|------------------|
-| 系统 | VMware 中的 Ubuntu 22.04.5 LTS，x86_64 |
-| 构建工具 | RISC-V GCC 15.1.0，GNU Make |
-| 模拟器 | QEMU 4.1.1，路径为 `~/os-lab/tools/qemu-4.1.1/bin/qemu-system-riscv64` |
-| 页大小 | 4096 字节，即 4 KiB |
-| 默认 RAM | 128 MiB，由设备树实际报告；另用 64 MiB、256 MiB 验证 |
-| 当前分配器 | 框架已有的 `default_pmm_manager`，即 First-Fit |
-| 开发基线 | 远端 `lab2` 的 `bca7fff`，成员 A 分支为 `member-a-lab2-init` |
-
-成员 A 的正式代码改动仅为在 `pmm.c` 的模块一标记位置增加实现。验证驱动放在独立副本中，未修改正式 Makefile、公共接口、地址宏和其他分配器；本次材料整理没有新增代码修改。
 
 ---
 
@@ -76,17 +61,14 @@
 
 ### 3.1 本章节的逻辑主线
 
-本实验围绕物理内存的发现、组织和分配展开。内核首先要知道机器提供了哪些内存，再排除已经占用的部分，为物理页建立描述信息，最后才能把空闲页交给分配器使用。
-
-框架已经提供设备树解析、启动页表和 First-Fit 算法。成员 A 的任务是实现连接设备树信息与分配器的 `page_init()`；Best-Fit、Buddy 等任务建立在初始化结果之上。它们的具体实现与验证由负责成员补充，本节仅说明依赖顺序。
+本实验围绕物理内存的探测、组织和分配管理展开。entry.S 里的启动页表先把内核映射到高虚拟地址，进入 kern_init() 后，pmm_init() 先选择并初始化分配器，再由 page_init() 建立页描述符布局并排除已用空间，最后通过 init_memmap() 把空闲页注册给当前分配器。本实验涉及的页分配器包括框架自带的 First-Fit、任务二实现的 Best-Fit、任务三实现的 Buddy System，三者共用同一套 struct pmm_manager 接口。
 
 ### 3.2 功能的逐步实现
 
-1. 框架的 `dtb_init()` 读取设备树并保存内存起点、大小。初始化函数据此判断可管理范围，而不是把默认内存大小写死。
-2. `init_pmm_manager()` 初始化当前分配器的内部状态。成员 A 验证时保持 First-Fit。
-3. `page_init()` 建立页描述符，保留内核及管理数据占用的空间，再通过 `init_memmap()` 注册空闲页。这是后续分配算法共用的基础。
-4. 在此基础上理解和实现不同分配策略，分别验证分配、释放与合并行为。各算法完成后再做全组集成。
-5. 页表查询调试等分支任务结合已有映射理解地址转换；相关操作与结论由负责成员提供。
+1. 实现page_init()。内核首先要从设备树探测物理内存大小，再排除已经被OpenSBI、内核镜像和管理数据占用的部分，为空闲物理页建立描述信息，最后再把这些空闲页交给当前 pmm_manager 管理。
+2. 理解First-Fit算法；实现Best-Fit的完整功能，将First-Fit算法切换为Best-Fit算法，运行qemu进行验证。
+3. 参考现有物理内存管理框架实现Buddy System，设计相应测试函数并编译运行；另外实现slub分配算法并测试验证。
+4. 使用gdb调试页表查询过程，理解地址转换和页表查询的完整流程。
 
 ---
 
@@ -111,9 +93,7 @@ static void page_init(void);
 
 **功能说明：**
 
-实现位于 [code/kern/mm/pmm.c](../code/kern/mm/pmm.c)，保留 `lab2` 注释并将本模块的 `YOUR CODE` 替换为学号 `2413671`。
-
-`page_init()` 不接收参数，也没有返回值。它读取设备树接口保存的内存信息，安排物理页描述符的存放位置，排除不能分配的区域，再把空闲页交给当前分配器。调用关系为：
+page_init() 负责读取设备树接口保存的内存信息，安排物理页描述符的存放位置，排除包括OpenSBI、内核镜像、描述符等不能分配的区域，进行页对齐后再把空闲页交给当前分配器。调用关系为：
 
 ```text
 kern_init() → dtb_init() → pmm_init()
@@ -122,53 +102,23 @@ kern_init() → dtb_init() → pmm_init()
                              └─ check_alloc_page()
 ```
 
-设备树解析和 First-Fit 分配、回收算法均由框架提供。本模块使用它们的接口，没有重新实现这些功能。
+框架的 dtb_init() 先解析内存节点并保存起点、大小，page_init() 再通过 get_memory_base()、get_memory_size() 读取结果。
 
-#### 地址与管理数据的含义
-
-框架的 `dtb_init()` 先解析内存节点并保存起点、大小，`page_init()` 再通过 `get_memory_base()`、`get_memory_size()` 读取结果。解析失败时可能得到零值，因此初始化不能直接假设内存信息有效。
-
-| 名称 | 本实现中的含义 |
-|------|----------------|
-| 物理地址 | RAM 中的位置，例如内核物理起点 `0x80200000` |
-| 虚拟地址 | 内核代码使用的地址，经现有页表映射到物理内存，例如内核虚拟起点 `0xFFFFFFFFC0200000` |
-| 物理页号 | 物理地址除以 4096 的结果，不是该地址本身 |
-| `struct Page` | 描述一个物理页的管理数据，记录引用计数、状态、空闲块长度和链表连接信息 |
-| `va_pa_offset` | 内核直接映射的虚实地址偏移，使用已有的 `PHYSICAL_MEMORY_OFFSET = 0xFFFFFFFF40000000` |
-| `nbase` | DRAM 起点对应的物理页号，固定为 `0x80000000 / 4096 = 0x80000` |
-| `npage` | 可管理物理页号的上界，不能直接当作物理页总数 |
-| `pages` | 描述符数组的虚拟地址，`pages[i]` 描述物理页号 `nbase + i` 的页面 |
-
-描述符数量为 `npage - nbase`。`pages` 自身指向的是管理数据，描述符所在的物理地址通过 `PADDR(pages)` 获取；`page2pa(pages)` 得到的是第一个描述符所描述的物理页地址，二者不能混用。
-
-#### 需求规格如何确定
-
-先结合指导书与已有宏、接口明确范围：输入来自已解析的设备树，输出是可供当前分配器使用的描述符和初始空闲区。然后将要求写成可以检查的状态，而不是只要求“完成函数”或逐行指定实现步骤。
-
-| 需求 | 对应的检查依据 |
-|------|----------------|
-| 内存信息有效 | 起点、大小非零，加法不溢出，起点符合当前固定 DRAM 映射 |
-| 不超出实际内存和工程上界 | 取设备树末端与 `PHYSICAL_MEMORY_END` 的较小值，再向下按页对齐 |
-| 描述符能完整放下 | 写入数组前检查内核末端、数组大小和可管理末端 |
-| 占用区不进入分配器 | 所有描述符先标记为保留，只注册数组之后的完整页 |
-| 没有完整空闲页时不注册 | 用独立测试记录 `init_memmap()` 调用次数，应为零 |
-| 成功状态可观察 | 输出实际内存范围、描述符位置和初始空闲页数量 |
-
-当前 `pa2page()` 没有检查低于 DRAM 起点的物理地址，所以调用方也必须保证传入地址位于有效区间。设备树基址与固定映射不兼容时，本实现明确 panic，不尝试支持框架之外的布局。
+描述符数量为 npage - nbase，其中npage为可管理物理页号的上界，nbase为内存起点对应的物理页号。pages 为描述符数组的虚拟地址，pages[i] 描述物理页号 nbase + i 的页面，描述符所在的物理地址可以通过 PADDR(pages) 获取。另外注意page2pa(pages) 得到的是第一个描述符所描述的物理页地址，二者不能混用。
 
 #### 核心实现说明
 
-1. 检查起点、大小以及范围加法，拒绝无效输入。计算末端前先判断溢出，避免先溢出再使用错误结果。
-2. 使用工程已有偏移设置 `va_pa_offset`。可管理末端受实际 RAM 和 `0x88000000` 上界共同限制，因此 256 MiB RAM 并不意味着本工程可以分配全部 256 MiB。
+1. 检查起点、大小以及范围加法。计算末端前先判断溢出，避免先溢出再使用错误结果。
+2. 使用工程已有偏移设置 va_pa_offset。可管理末端受实际 RAM 和0x88000000上界共同限制，因此 256 MiB RAM 并不意味着本工程可以分配全部 256 MiB。
 3. 将内核末端向上按页对齐，作为描述符数组的起点。数组大小为 `(npage - nbase) * sizeof(struct Page)`，在整体容量检查通过后才写入数组。
-4. 描述符数组本身也存放在 RAM 中，不能被分配出去。因此 OpenSBI、内核镜像、描述符数组及相关对齐空间均保持保留状态。
-5. 把数组末端向上对齐，作为候选空闲区起点。只有它低于可管理末端时才调用 `init_memmap()`；末尾不足一页的空间不加入空闲区。
+4. 描述符数组本身也存放在 RAM 中，不能分配，因此 OpenSBI、内核镜像、描述符数组及相关对齐空间均保持保留状态。
+5. 把数组末端向上对齐，作为候选空闲区起点。只有它低于可管理末端时才调用 init_memmap()；末尾不足一页的空间不加入空闲区。
 
-`init_memmap()` 是分配器接口的包装函数，会转交给当前 `pmm_manager->init_memmap()`。本轮使用原有 First-Fit，由它建立空闲链表并更新空闲页数量。后续切换其他分配器仍可复用模块一提供的初始化结果。
+init_memmap() 是分配器接口的包装函数，会转交给当前 `pmm_manager->init_memmap()`。本轮使用原有 First-Fit，由它建立空闲链表并更新空闲页数量。后续切换其他分配器仍可复用模块一提供的初始化结果。
 
 #### 最终提示词
 
-本模块使用一版实现提示词，没有代码修复迭代。以下原样引用实际提示词的四段正文；前导说明、首次验证要求和交付要求见 [prompt.md 中的 A-2 完整原文](./prompt.md#member-a-prompt-implementation)。
+本模块使用一版实现提示词，没有代码修复迭代。
 
 ````text
 [PROMPT]
@@ -179,7 +129,7 @@ kern_init() → dtb_init() → pmm_init()
 
 在 code/kern/mm/pmm.c 的模块一标记位置实现 static void page_init(void)。保留 lab2 注释，只将本模块的 YOUR CODE 替换为我的学号 2413671。
 
-本轮不实现 Best-Fit、Buddy，不切换当前的 default_pmm_manager，不修改已有测试函数、公共接口、结构体和地址宏。暂不推送 GitHub。
+本轮不实现 Best-Fit、Buddy，不切换当前的 default_pmm_manager，不修改已有测试函数、公共接口、结构体和地址宏。
 
 [RELY]
 
@@ -222,10 +172,8 @@ dtb_init() 在 pmm_init() 之前执行。npage 表示物理页号上界，pages 
 实际过程为一次实现、两轮验证：
 
 1. **工程检查。** 确认设备树接口、固定映射和已有测试。发现原始 Best-Fit 骨架尚未完成，但默认构建会把它一起编译，因此需要隔离该编译单元。
-2. **实现与首次验证。** 在独立的 `member-a-lab2-init` 分支中增加 `page_init()`，使用命令行构建参数临时排除 `best_fit_pmm.c`。QEMU 4.1.1 默认 128 MiB 下构建成功，并通过已有 First-Fit 检查。
+2. **实现与首次验证。** 完善 `page_init()`，使用命令行构建参数临时排除 `best_fit_pmm.c`，成功通过已有 First-Fit 检查。
 3. **专项验证。** 在独立副本中接入原始 `test_page_init()`，再对不同 RAM 大小、无效接口值和空间边界做 13 个场景的检查。本轮场景通过，未发现需要修改正式实现的问题。
-
-Best-Fit 的编译依赖问题属于验证安排，不是 `page_init()` 的算法错误。没有通过修改断言、补写其他分配器或伪造输出完成验证。正式代码没有经历错误修复轮次；检查、实现、专项验证和材料整理的实际提示词见 [prompt.md](./prompt.md)。
 
 ---
 
@@ -412,7 +360,144 @@ int another_function(int arg);
 
 ````markdown
 
-[按照提示词模板，给出具体的提示词]
+伙伴系统实现：
+
+[PROMPT]
+**任务**：参考现有 ucore 物理内存管理框架，从零生成 Buddy System 分配模块并接入内核。在 kern/mm 文件夹下新增buddy_system_pmm.h、buddy_system_pmm.c文件，实现 struct pmm_manager要求的完整接口；定义buddy_system_pmm_manager，在kern/mm/pmm.c的init_pmm_manager()中将当前物理内存管理器切换为buddy_system_pmm_manager；同时在 Makefile中把buddy_system_pmm.o加入编译。
+
+**操作要求**：你必须在项目中修改和新增实际文件，生成可运行的代码，完成伙伴系统内存管理框架的实现。不要修改 default_pmm.c、best_fit_pmm.c以及struct pmm_manager的接口定义，包括page_init()、alloc_pages()、free_pages()、nr_free_pages()、check_alloc_page()等函数的转发逻辑。
+
+**输出要求**：直接进行文件操作，保留文件中的现有代码，实现或修改的代码应插入或更新到相应的位置，不要引入无关功能和不必要的函数，除非必需的辅助函数。使用下面[RELY]、[GUARANTEE]、[SPECIFICATION]部分的信息。
+
+
+[RELY]
+以下为完成任务可能所需的上下文信息，包括宏定义、数据结构、可调用的函数、相关全局变量等，包括但不限于：
+
+// 宏定义
+mmu.h: PGSIZE, PGSHIFT
+riscv.h: DRAM_BASE
+memlayout.h: PG_reserved, PG_property
+pmm.h: alloc_page(), free_page(page) 
+
+// 数据结构
+memlayout.h: struct Page {
+    int ref;
+    uint64_t flags;
+    unsigned int property;
+    list_entry_t page_link;
+};
+// struct Page 每个实例描述一个 4KB 物理页；property 在 Buddy 中记录该块分配时的 order；page_link 用于挂空闲链表
+memlayout.h: free_area_t {
+    list_entry_t free_list;
+    unsigned int nr_free;
+};
+list.h: list_entry_t
+pmm.h: struct pmm_manager
+
+// 可用函数
+memlayout.h: SetPageProperty, ClearPageProperty, PageProperty, le2page
+list.h: list_init, list_empty, list_add, list_add_before, list_del, list_next, list_prev
+pmm.h: page2ppn(page), page2pa(page), pa2page(pa)
+
+// 全局变量
+pmm.h: pages, npage, nbase
+// pages 指向 Page 描述符数组首地址，数组覆盖物理页号 [nbase, npage)
+// nbase = DRAM_BASE / PGSIZE，pages[0] 对应物理页号 nbase，即物理地址 DRAM_BASE
+// pages[i] 对应物理页号 nbase + i，对应物理地址 (nbase + i) << PGSHIFT
+page2ppn(page) = page - pages + nbase
+page2pa(page) = page2ppn(page) << PGSHIFT
+pa2page(pa) = &pages[PPN(pa) - nbase]
+// 由 Page 指针求物理页号必须用 page2ppn，求物理地址必须用 page2pa，不能用 page - pages 直接当物理页号
+
+
+[GUARANTEE]
+必须新增的接口如下：
+定义 buddy_system_pmm_manager，并在头文件中声明；
+
+kern/mm/buddy_system_pmm.c 必须实现以下静态函数：
+static void buddy_init(void);
+static void buddy_init_memmap(struct Page *base, size_t n);
+static struct Page *buddy_alloc_pages(size_t n);
+static void buddy_free_pages(struct Page *base, size_t n);
+static size_t buddy_nr_free_pages(void);
+
+buddy_init：初始化 Buddy 管理器的内部状态，包括所有 order 的空闲链表和总空闲页计数。
+
+buddy_init_memmap：把从 base 开始的连续 n 个物理页登记为 Buddy 空闲块；清除这些页的 PG_reserved，设置首页 PG_property，按 order 对齐要求把这段页拆成若干 2 的幂大小的块，分别挂到对应 order 的空闲链表，并更新总空闲页计数。n 不保证是 2 的幂，base 的页号不保证按 n 对齐。
+
+buddy_alloc_pages：分配至少 n 页连续物理页，返回块首页的 struct Page *；实际分配块大小是大于等于 n 的最小 2 的幂；成功时从对应 order 空闲链表摘除，清除该页 flags 中的 PG_property 标记，并在 property 字段记录实际分配的 order，更新总空闲页计数；失败时返回 NULL，不修改任何链表和计数。
+
+buddy_free_pages：释放由 buddy_alloc_pages 返回的块首页 base；以 base->property 记录的 order 为准，把块挂回对应 order 空闲链表；如果伙伴块也空闲且同 order，则合并并递归向上合并；合并后更新首页 PG_property 和 property，摘除被合并页的链表节点，更新总空闲页计数。
+
+buddy_nr_free_pages：返回当前所有 order 空闲块包含的页数总和。
+
+必须修改的现有接口：
+kern/mm/pmm.c 中的 init_pmm_manager()：把 pmm_manager 指向 buddy_system_pmm_manager，调用 pmm_manager->init()，输出管理器名称；保留原有 First-Fit / Best-Fit 管理器定义，保持可以通过修改一行指针切换内存管理器。
+
+Makefile：把 buddy_system_pmm.o 加入编译，使新增模块参与链接。
+
+你可以根据需要添加：
+- 辅助函数（建议设为static，只在本模块内部使用，不应该改变公开接口）
+- 内部使用的宏定义
+- 模块内部的静态变量
+
+[SPECIFICATION]
+以下为每个函数的行为规格：
+## buddy_init
+
+**Pre-Condition**: 由init_pmm_manager()调用，此时还没有登记空闲块。
+
+**Post-Condition**: Buddy 管理器的内部空闲结构与计数处于空状态，所有 order 对应的空闲链表都为空，总空闲页计数为 0。
+
+## buddy_init_memmap
+
+**Pre-Condition**: base指向连续物理页的首页描述符，n > 0；这段页处于保留状态，尚未登记为空闲；n不保证是 2 的幂，base页号不保证按某个 2 的幂对齐。
+
+**Post-Condition**: 每个描述符引用计数为 0，保留标记被清除；这段页被拆成若干 2 的幂大小的块，每块首页标记为空闲块首页并记录其 order；每块首页页号按其 order 对齐，块内非首页不标记；所有块首页挂到对应 order 的空闲链表，总空闲页计数增加 n。
+
+**Case 1：n是2的幂且base页号按n对齐**
+- 整段作为单个 order 为对应幂次的块登记。
+
+**Case 2：n是 2 的幂但base 页号不按n对齐，或n不是2的幂**
+- 按对齐要求和2的幂大小拆成多个块，分别挂到对应 order。
+
+**Case 3：n == 0**
+- 不登记任何块，计数不变。
+
+## buddy_alloc_pages
+
+**Pre-Condition**: 管理器已初始化，init_memmap已登记空闲页。
+
+**Post-Condition**: 成功时返回块首页，实际块大小是大于等于n的最小 2 的幂；返回块已从对应 order 链表摘除，不再是空闲块首页，并记录分配时的 order；总空闲页计数减去实际块大小。失败时返回空指针，链表和计数不变。
+
+**Case 1：目标 order 有空闲块**
+- 直接摘下返回。
+
+**Case 2：目标 order 无空闲块，但更大 order 有空闲块**
+- 从更大 order 逐级分裂，另一半作为对应 order 的空闲块登记，直到得到目标 order。
+
+**Case 3：空闲页不足或所有更大 order 都无可用块**
+- 返回空指针，不修改链表和计数。
+
+## buddy_free_pages
+
+**Pre-Condition**: base块当前不在空闲链表中，且首页记录了分配时的 order。
+
+**Post-Condition**: 该块被标记为空闲块首页并挂回对应 order 链表；伙伴空闲且同 order 时合并，并递归向上合并；合并后首页标记为空闲块首页并记录新 order，被合并的首页不再是空闲块首页并从链表摘除，总空闲页计数增加实际释放块大小。
+
+**Case 1：伙伴不空闲或不在空闲链表**
+- 直接把该块挂回对应 order 链表，计数增加该块大小。
+
+**Case 2：伙伴空闲且同 order**
+- 合并为 order+1 的块，首页取页号较小者，继续向上检查，直到伙伴不空闲、超出最大 order 或伙伴页号越界。
+
+## buddy_nr_free_pages
+
+**Pre-Condition**: 管理器已初始化。
+
+**Post-Condition**: 返回所有 order 空闲块包含的页数总和，与遍历链表累加结果一致。
+
+注：以上行为描述可能有错漏，可以根据实际情况进行适当调整。
 
 ````
 
@@ -514,7 +599,7 @@ check_alloc_page() succeeded!
 
 原始材料：[构建日志](./verification/member-a/first-run/build.log)、[运行日志](./verification/member-a/first-run/run.log)、[执行命令与输出](./verification/member-a/first-run/session.log)。
 
-### 5.2 成员 A：原始专项测试与边界场景
+### 5.2 原始专项测试与边界场景
 
 在独立副本中增加测试接入点，实际 `page_init()` 函数体保持不变。默认场景在 `page_init()` 返回后、First-Fit 检查之前调用原 `test_page_init()`，测试条件未修改，输出为：
 
@@ -586,6 +671,12 @@ check_alloc_page() succeeded!
 
 首次 `make test` 因复用了 `make qemu` 的旧 `.o`（未带 `-D ucore_test`）而没有逐行打分；`make clean` 后重新 `make test` 才得到上述评分。这表明评分开关依赖 `CFLAGS2`（`-D ucore_test`），验证前必须先 `make clean`，避免旧目标文件被复用。
 
+
+### 模块二任务三
+
+伙伴系统实现后运行make qemu验证：
+![Buddy System implement](./images/buddy_system_impl.png)
+
 ---
 
 ## 六、实验总结与收获
@@ -594,7 +685,7 @@ check_alloc_page() succeeded!
 
 ## 对操作系统的理解
 
-以下为成员 A 的模块一总结，其他成员可继续补充各自模块。
+模块一：
 
 | 模块一内容 | 与 OS 原理的对应关系 |
 |------------|---------------------|
@@ -607,7 +698,7 @@ check_alloc_page() succeeded!
 
 本模块尚未实现进程地址空间、按需分页、缺页处理、页面置换、交换、并发分配保护和完整的多段内存管理。启动页表和分配算法虽然是依赖条件，但不能算作成员 A 新实现的内容。
 
-成员 B（模块二任务一、任务二）的理解：
+模块二任务一、任务二的理解：
 
 | 模块二内容 | 与 OS 原理的对应关系 |
 |------------|---------------------|
