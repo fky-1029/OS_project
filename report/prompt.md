@@ -116,7 +116,254 @@ Best-Fit 与 First-Fit 的区别只在 alloc_pages 的选择策略；初始化�
 
 ### Prompt 1：Buddy System 代码实现
 
-### Prompt 2：实现测试函数
+````markdown
+
+[PROMPT]
+**任务**：参考现有 ucore 物理内存管理框架，从零生成 Buddy System 分配模块并接入内核。在 kern/mm 文件夹下新增buddy_system_pmm.h、buddy_system_pmm.c文件，实现 struct pmm_manager要求的完整接口；定义buddy_system_pmm_manager，在kern/mm/pmm.c的init_pmm_manager()中将当前物理内存管理器切换为buddy_system_pmm_manager；同时在 Makefile中把buddy_system_pmm.o加入编译。
+
+**操作要求**：你必须在项目中修改和新增实际文件，生成可运行的代码，完成伙伴系统内存管理框架的实现。不要修改 default_pmm.c、best_fit_pmm.c以及struct pmm_manager的接口定义，包括page_init()、alloc_pages()、free_pages()、nr_free_pages()、check_alloc_page()等函数的转发逻辑。
+
+**输出要求**：直接进行文件操作，保留文件中的现有代码，实现或修改的代码应插入或更新到相应的位置，不要引入无关功能和不必要的函数，除非必需的辅助函数。使用下面[RELY]、[GUARANTEE]、[SPECIFICATION]部分的信息。
+
+
+[RELY]
+以下为完成任务可能所需的上下文信息，包括宏定义、数据结构、可调用的函数、相关全局变量等，包括但不限于：
+
+// 宏定义
+mmu.h: PGSIZE, PGSHIFT
+riscv.h: DRAM_BASE
+memlayout.h: PG_reserved, PG_property
+pmm.h: alloc_page(), free_page(page) 
+
+// 数据结构
+memlayout.h: struct Page {
+    int ref;
+    uint64_t flags;
+    unsigned int property;
+    list_entry_t page_link;
+};
+// struct Page 每个实例描述一个 4KB 物理页；property 在 Buddy 中记录该块分配时的 order；page_link 用于挂空闲链表
+memlayout.h: free_area_t {
+    list_entry_t free_list;
+    unsigned int nr_free;
+};
+list.h: list_entry_t
+pmm.h: struct pmm_manager
+
+// 可用函数
+memlayout.h: SetPageProperty, ClearPageProperty, PageProperty, le2page
+list.h: list_init, list_empty, list_add, list_add_before, list_del, list_next, list_prev
+pmm.h: page2ppn(page), page2pa(page), pa2page(pa)
+
+// 全局变量
+pmm.h: pages, npage, nbase
+// pages 指向 Page 描述符数组首地址，数组覆盖物理页号 [nbase, npage)
+// nbase = DRAM_BASE / PGSIZE，pages[0] 对应物理页号 nbase，即物理地址 DRAM_BASE
+// pages[i] 对应物理页号 nbase + i，对应物理地址 (nbase + i) << PGSHIFT
+page2ppn(page) = page - pages + nbase
+page2pa(page) = page2ppn(page) << PGSHIFT
+pa2page(pa) = &pages[PPN(pa) - nbase]
+// 由 Page 指针求物理页号必须用 page2ppn，求物理地址必须用 page2pa，不能用 page - pages 直接当物理页号
+
+
+[GUARANTEE]
+必须新增的接口如下：
+定义 buddy_system_pmm_manager，并在头文件中声明；
+
+kern/mm/buddy_system_pmm.c 必须实现以下静态函数：
+static void buddy_init(void);
+static void buddy_init_memmap(struct Page *base, size_t n);
+static struct Page *buddy_alloc_pages(size_t n);
+static void buddy_free_pages(struct Page *base, size_t n);
+static size_t buddy_nr_free_pages(void);
+
+buddy_init：初始化 Buddy 管理器的内部状态，包括所有 order 的空闲链表和总空闲页计数。
+
+buddy_init_memmap：把从 base 开始的连续 n 个物理页登记为 Buddy 空闲块；清除这些页的 PG_reserved，设置首页 PG_property，按 order 对齐要求把这段页拆成若干 2 的幂大小的块，分别挂到对应 order 的空闲链表，并更新总空闲页计数。n 不保证是 2 的幂，base 的页号不保证按 n 对齐。
+
+buddy_alloc_pages：分配至少 n 页连续物理页，返回块首页的 struct Page *；实际分配块大小是大于等于 n 的最小 2 的幂；成功时从对应 order 空闲链表摘除，清除该页 flags 中的 PG_property 标记，并在 property 字段记录实际分配的 order，更新总空闲页计数；失败时返回 NULL，不修改任何链表和计数。
+
+buddy_free_pages：释放由 buddy_alloc_pages 返回的块首页 base；以 base->property 记录的 order 为准，把块挂回对应 order 空闲链表；如果伙伴块也空闲且同 order，则合并并递归向上合并；合并后更新首页 PG_property 和 property，摘除被合并页的链表节点，更新总空闲页计数。
+
+buddy_nr_free_pages：返回当前所有 order 空闲块包含的页数总和。
+
+必须修改的现有接口：
+kern/mm/pmm.c 中的 init_pmm_manager()：把 pmm_manager 指向 buddy_system_pmm_manager，调用 pmm_manager->init()，输出管理器名称；保留原有 First-Fit / Best-Fit 管理器定义，保持可以通过修改一行指针切换内存管理器。
+
+Makefile：把 buddy_system_pmm.o 加入编译，使新增模块参与链接。
+
+你可以根据需要添加：
+- 辅助函数（建议设为static，只在本模块内部使用，不应该改变公开接口）
+- 内部使用的宏定义
+- 模块内部的静态变量
+
+[SPECIFICATION]
+以下为每个函数的行为规格：
+## buddy_init
+
+**Pre-Condition**: 由init_pmm_manager()调用，此时还没有登记空闲块。
+
+**Post-Condition**: Buddy 管理器的内部空闲结构与计数处于空状态，所有 order 对应的空闲链表都为空，总空闲页计数为 0。
+
+## buddy_init_memmap
+
+**Pre-Condition**: base指向连续物理页的首页描述符，n > 0；这段页处于保留状态，尚未登记为空闲；n不保证是 2 的幂，base页号不保证按某个 2 的幂对齐。
+
+**Post-Condition**: 每个描述符引用计数为 0，保留标记被清除；这段页被拆成若干 2 的幂大小的块，每块首页标记为空闲块首页并记录其 order；每块首页页号按其 order 对齐，块内非首页不标记；所有块首页挂到对应 order 的空闲链表，总空闲页计数增加 n。
+
+**Case 1：n是2的幂且base页号按n对齐**
+- 整段作为单个 order 为对应幂次的块登记。
+
+**Case 2：n是 2 的幂但base 页号不按n对齐，或n不是2的幂**
+- 按对齐要求和2的幂大小拆成多个块，分别挂到对应 order。
+
+**Case 3：n == 0**
+- 不登记任何块，计数不变。
+
+## buddy_alloc_pages
+
+**Pre-Condition**: 管理器已初始化，init_memmap已登记空闲页。
+
+**Post-Condition**: 成功时返回块首页，实际块大小是大于等于n的最小 2 的幂；返回块已从对应 order 链表摘除，不再是空闲块首页，并记录分配时的 order；总空闲页计数减去实际块大小。失败时返回空指针，链表和计数不变。
+
+**Case 1：目标 order 有空闲块**
+- 直接摘下返回。
+
+**Case 2：目标 order 无空闲块，但更大 order 有空闲块**
+- 从更大 order 逐级分裂，另一半作为对应 order 的空闲块登记，直到得到目标 order。
+
+**Case 3：空闲页不足或所有更大 order 都无可用块**
+- 返回空指针，不修改链表和计数。
+
+## buddy_free_pages
+
+**Pre-Condition**: base块当前不在空闲链表中，且首页记录了分配时的 order。
+
+**Post-Condition**: 该块被标记为空闲块首页并挂回对应 order 链表；伙伴空闲且同 order 时合并，并递归向上合并；合并后首页标记为空闲块首页并记录新 order，被合并的首页不再是空闲块首页并从链表摘除，总空闲页计数增加实际释放块大小。
+
+**Case 1：伙伴不空闲或不在空闲链表**
+- 直接把该块挂回对应 order 链表，计数增加该块大小。
+
+**Case 2：伙伴空闲且同 order**
+- 合并为 order+1 的块，首页取页号较小者，继续向上检查，直到伙伴不空闲、超出最大 order 或伙伴页号越界。
+
+## buddy_nr_free_pages
+
+**Pre-Condition**: 管理器已初始化。
+
+**Post-Condition**: 返回所有 order 空闲块包含的页数总和，与遍历链表累加结果一致。
+
+注：以上行为描述可能有错漏，可以根据实际情况进行适当调整。
+
+````
+
+### Prompt 2：实现buddy_check()测试函数
+
+
+````markdown
+
+[PROMPT]
+**任务：** 在 kern/mm/buddy_system_pmm.c 中实现buddy_check()函数，设计并实现完整的 Buddy System 测试用例，验证 buddy_init_memmap、buddy_alloc_pages、buddy_free_pages、buddy_nr_free_pages等函数的行为是否正确。测试失败时通过 assert 终止；测试通过时尽量恢复测试前的空闲状态。
+
+**操作要求：** 只在 kern/mm/buddy_system_pmm.c 中实现 buddy_check() 及必要的 static 辅助测试函数，不要修改相关函数的实现；不要修改其他内存管理器的代码，包括default_pmm.c、best_fit_pmm.c、pmm.h、pmm.c 的转发逻辑；可以参考default_check 或 best_fit_check。
+
+**输出要求：** 直接进行文件操作，保留现有代码，只新增 buddy_check() 及 static 辅助测试函数，不要引入无关功能。
+
+
+[RELY]
+// 宏定义
+mmu.h: PGSIZE, PGSHIFT
+riscv.h: DRAM_BASE
+memlayout.h: PG_reserved, PG_property
+pmm.h: alloc_page(), alloc_pages(n), free_page(page), free_pages(base, n), nr_free_pages()
+
+// 数据结构
+memlayout.h: struct Page {
+int ref;
+uint64_t flags;
+unsigned int property;
+list_entry_t page_link;
+};
+// property 在 Buddy 中记录该块分配时的 order；page_link 用于挂空闲链表
+memlayout.h: free_area_t {
+list_entry_t free_list;
+unsigned int nr_free;
+};
+list.h: list_entry_t
+pmm.h: struct pmm_manager
+
+// 可用函数
+memlayout.h: PageProperty, le2page
+list.h: list_init, list_empty, list_add, list_add_before, list_del, list_next, list_prev
+pmm.h: page2ppn(page), page2pa(page), pa2page(pa)
+pmm.h: alloc_page(), alloc_pages(n), free_page(page), free_pages(base, n), nr_free_pages()
+stdio.h: cprintf
+
+// 全局变量
+pmm.h: pages, npage, nbase
+// page2ppn(page) = page - pages + nbase
+// 伙伴页号按 pfn ^ (1 << order) 计算
+// 伙伴 Page 指针 = &pages[buddy_pfn - nbase]
+
+// 测试约束
+buddy_check 由 pmm_manager->check() 调用，测试中只能通过 alloc_pages / free_pages / nr_free_pages 访问分配接口，不要直接调用 buddy_alloc_pages / buddy_free_pages
+
+
+[GUARANTEE]
+必须实现的接口：
+static void buddy_check(void);
+
+允许新增：
+- static 辅助测试函数，只在本模块内部使用；
+- 测试辅助宏；
+- 测试辅助静态变量。
+
+
+[SPECIFICATION]
+
+buddy_check：
+
+**Pre-Condition: **
+Buddy 管理器已初始化，init_memmap 已登记空闲页；当前 pmm_manager 指向 buddy_system_pmm_manager。
+
+**Post-Condition: **
+执行完整的 Buddy 测试用例；所有测试通过时，管理器空闲状态尽可能恢复到测试前；任一测试失败时通过 assert 终止。
+
+测试必须覆盖包括但不限于以下情况：
+
+**Case 1：初始状态一致性**
+
+遍历所有 order 空闲链表，检查每个节点首页 PageProperty 为真，property 等于该节点所在 order；每个节点首页页号按其 order 对齐；所有 order 链表累加的块大小等于 nr_free_pages()。
+
+**Case 2：基本分配请求**
+
+分配2的幂次页，检查返回块首页 property 对应的 order；释放后检查 nr_free_pages() 恢复。
+
+**Case 3：非 2 的幂分配请求**
+
+分配非2的幂次页，检查返回块首页 property 对应的 order；释放后检查nr_free_pages()恢复。
+
+**Case 4：分裂**
+
+在目标 order 无空闲块时，从更大 order 分裂；检查分裂后出现两个同 order 的伙伴块，其中一个是空闲块，且该空闲块首页按其 order 对齐。
+
+**Case 5：伙伴合并**
+
+分配两个互为伙伴的块，分别释放；检查第二次释放后合并成更大的块，nr_free_pages() 正确。
+
+**Case 6：递归合并**
+
+构造连续多个 order 的伙伴块，按顺序释放；检查能递归向上合并到最大可能块，链表节点数量减少。
+
+**Case 7：空闲不足**
+
+请求超过当前空闲页数的分配，返回 NULL；检查 nr_free_pages() 和链表未被破坏。
+
+**Case 8：计数一致性**
+
+在多次分配释放后，遍历所有 order 链表累加结果与 nr_free_pages() 一致。
+
+````
 
 
 ## 功能模块二challenge

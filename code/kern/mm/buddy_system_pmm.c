@@ -176,7 +176,7 @@ buddy_nr_free_pages(void) {
     return nr_free;
 }
 
-static void buddy_system_check(void);
+static void buddy_check(void);
 
 const struct pmm_manager buddy_system_pmm_manager = {
     .name = "buddy_system_pmm_manager",
@@ -185,14 +185,25 @@ const struct pmm_manager buddy_system_pmm_manager = {
     .alloc_pages = buddy_alloc_pages,
     .free_pages = buddy_free_pages,
     .nr_free_pages = buddy_nr_free_pages,
-    .check = buddy_system_check,
+    .check = buddy_check,
 };
 
 /* ----------------------------- 测试部分 ----------------------------- */
 
-// 统计某个 order 空闲链表上的块数
+// 测试期间临时借出的块，用于构造"空闲不足"和"只留大块"的场景
+#define BUDDY_TEST_MAX_BLOCKS 96
+
+static struct Page *test_held_page[BUDDY_TEST_MAX_BLOCKS];
+static size_t test_held_pages[BUDDY_TEST_MAX_BLOCKS];
+
+// 测试前后的空闲布局快照
+struct buddy_snapshot {
+    size_t order_count[MAX_ORDER + 1];
+    size_t free_pages;
+};
+
 static size_t
-buddy_count_list(unsigned int order) {
+buddy_count(unsigned int order) {
     size_t count = 0;
     for (list_entry_t *le = list_next(&free_lists[order]);
          le != &free_lists[order]; le = list_next(le)) {
@@ -201,30 +212,23 @@ buddy_count_list(unsigned int order) {
     return count;
 }
 
-// 清空所有 order 的链表和计数，并清除全部分配块标记
 static void
-buddy_clear_all_marks(void) {
-    size_t total = npage - nbase;
-    for (size_t i = 0; i < total; i++) {
-        pages[i].property = 0;
-        ClearPageProperty(&pages[i]);
-    }
-}
-
-static void
-buddy_reset_lists(void) {
+buddy_take_snapshot(struct buddy_snapshot *s) {
     for (unsigned int order = 0; order <= MAX_ORDER; order++) {
-        list_init(&free_lists[order]);
+        s->order_count[order] = buddy_count(order);
     }
-    nr_free = 0;
-    buddy_clear_all_marks();
+    s->free_pages = nr_free_pages();
 }
 
-/*
- * 检查空闲链表的全部不变量：每个节点都是空闲块首页、property 与所在 order
- * 一致、首页页号按 order 对齐、块不越过描述符范围，且所有块页数之和等于
- * 管理器的空闲页计数。
- */
+static void
+buddy_expect_snapshot(const struct buddy_snapshot *s) {
+    assert(nr_free_pages() == s->free_pages);
+    for (unsigned int order = 0; order <= MAX_ORDER; order++) {
+        assert(buddy_count(order) == s->order_count[order]);
+    }
+}
+
+// Case 1：初始状态一致性
 static void
 buddy_check_lists(void) {
     size_t total = 0;
@@ -245,135 +249,242 @@ buddy_check_lists(void) {
         }
     }
 
-    assert(total == (size_t)nr_free);
-    assert(nr_free_pages() == (size_t)nr_free);
+    assert(total == nr_free_pages());
 }
 
 /*
- * 从页描述符重建初始空闲区。check 期间会破坏性地重置内部链表，结束后需要
- * 恢复。初始空闲区就是所有清除了 PG_reserved 的连续页，用与 init_memmap
- * 完全相同的拆分规则重新登记，即可得到启动时的空闲链表。
+ * 找一个"本 order 没有空闲块、但更大 order 有空闲块"的 order，
+ * 用于验证分配时的分裂行为。找不到返回 -1。
  */
-static void
-buddy_rebuild_from_descriptors(void) {
-    size_t total = npage - nbase;
-
-    buddy_reset_lists();
-
-    size_t i = 0;
-    while (i < total) {
-        if (PageReserved(&pages[i])) {
-            i++;
+static int
+buddy_find_split_order(void) {
+    for (unsigned int order = 0; order < MAX_ORDER; order++) {
+        if (!list_empty(&free_lists[order])) {
             continue;
         }
-        size_t start = i;
-        while (i < total && !PageReserved(&pages[i])) {
-            i++;
+        for (unsigned int bigger = order + 1; bigger <= MAX_ORDER; bigger++) {
+            if (!list_empty(&free_lists[bigger])) {
+                return (int)order;
+            }
         }
-        buddy_register_range(&pages[start], i - start);
     }
+    return -1;
 }
 
 static void
-buddy_system_check(void) {
-    // 1. 初始状态一致性：链表、order、对齐、计数
+buddy_check(void) {
+    struct buddy_snapshot before;
+
+    // Case 1：遍历所有 order 链表，检查首页标记、order、对齐和计数
     buddy_check_lists();
+    buddy_take_snapshot(&before);
 
-    size_t saved_free = nr_free;
-    if (saved_free == 0) {
+    if (nr_free_pages() == 0) {
         return;
     }
 
-    // 2. 取一个完整的空闲块作为测试场地，保证地址对齐已知
-    unsigned int arena_order = MAX_ORDER;
-    while (arena_order > 0 && list_empty(&free_lists[arena_order])) {
-        arena_order--;
-    }
-    if (list_empty(&free_lists[arena_order])) {
-        return;
-    }
-    struct Page *arena = le2page(list_next(&free_lists[arena_order]),
-                                 page_link);
-    size_t arena_pages = BUDDY_PAGES(arena_order);
+    // Case 2：2 的幂请求，分配 1 页
+    {
+        size_t free_before = nr_free_pages();
+        struct Page *p = alloc_pages(1);
 
-    // 后续用例需要至少 8 页的场地，空闲区太小时只做一致性检查。
-    if (arena_order < 3) {
-        return;
-    }
+        assert(p != NULL);
+        assert(!PageProperty(p));
+        assert(p->property == 0);
+        assert(page_ref(p) == 0);
+        assert(nr_free_pages() == free_before - 1);
 
-    // 3. 把管理器收缩到只剩这个块，避免测试结果依赖外部空闲布局
-    buddy_reset_lists();
-    buddy_register_range(arena, arena_pages);
-
-    assert(nr_free == (unsigned int)arena_pages);
-    assert(buddy_count_list(arena_order) == 1);
-
-    // 4. 基本分配：1 页请求得到 order 0 的块，且逐级分裂出伙伴块
-    struct Page *p0 = alloc_pages(1);
-    assert(p0 == arena);
-    assert(!PageProperty(p0));
-    assert(p0->property == 0);
-    assert(page_ref(p0) == 0);
-    assert(nr_free == (unsigned int)arena_pages - 1);
-    for (unsigned int order = 0; order < arena_order; order++) {
-        assert(buddy_count_list(order) == 1);
-    }
-    assert(list_empty(&free_lists[arena_order]));
-
-    // 5. 伙伴仍被占用时不能合并
-    struct Page *p1 = alloc_pages(1);
-    assert(p1 == arena + 1);
-    assert(nr_free == (unsigned int)arena_pages - 2);
-
-    free_pages(p1, 1);
-    assert(nr_free == (unsigned int)arena_pages - 1);
-    assert(buddy_count_list(0) == 1);
-    assert(buddy_count_list(1) == 0);
-
-    // 6. 释放另一页，两个伙伴应当递归合并回最初的整块
-    free_pages(p0, 1);
-    assert(nr_free == (unsigned int)arena_pages);
-    assert(buddy_count_list(arena_order) == 1);
-    for (unsigned int order = 0; order < arena_order; order++) {
-        assert(buddy_count_list(order) == 0);
+        free_page(p);
+        assert(nr_free_pages() == free_before);
+        buddy_expect_snapshot(&before);
     }
 
-    // 7. 非 2 的幂请求：3 页应得到 4 页的块，释放后完全归还
-    p0 = alloc_pages(3);
-    assert(p0 == arena);
-    assert(p0->property == 2);
-    assert(nr_free == (unsigned int)arena_pages - 4);
-    free_pages(p0, 3);
-    assert(nr_free == (unsigned int)arena_pages);
-    assert(buddy_count_list(arena_order) == 1);
+    // Case 3：非 2 的幂请求，分配 3 页应得到 order 2 的块
+    if (nr_free_pages() >= 4) {
+        size_t free_before = nr_free_pages();
+        struct Page *p = alloc_pages(3);
 
-    // 8. 空闲页不足：失败且不改变链表和计数
-    buddy_reset_lists();
-    buddy_register_range(arena, arena_pages / 2);
-    assert(nr_free == (unsigned int)(arena_pages / 2));
-    p0 = alloc_pages((size_t)nr_free + 1);
-    assert(p0 == NULL);
-    assert(nr_free == (unsigned int)(arena_pages / 2));
-    assert(buddy_count_list(arena_order - 1) == 1);
+        assert(p != NULL);
+        assert(!PageProperty(p));
+        assert(p->property == 2);
+        assert(nr_free_pages() == free_before - 4);
 
-    // 9. 非对齐起点 + 非 2 的幂长度：[arena+1, arena+6) 应拆成 1+2+2
-    buddy_reset_lists();
-    buddy_register_range(arena + 1, 5);
-    assert(nr_free == 5);
-    assert(buddy_count_list(0) == 1);
-    assert(buddy_count_list(1) == 2);
+        free_pages(p, 3);
+        assert(nr_free_pages() == free_before);
+        buddy_expect_snapshot(&before);
+    }
 
-    // 总空闲页够但没有 order 2 的连续块，4 页请求必须失败
-    assert(alloc_pages(4) == NULL);
-    assert(nr_free == 5);
+    // Case 4：目标 order 没有空闲块，从更大的块分裂
+    int split_order = buddy_find_split_order();
+    if (split_order >= 0) {
+        unsigned int order = (unsigned int)split_order;
+        size_t n = BUDDY_PAGES(order);
+        size_t free_before = nr_free_pages();
+        struct Page *p = alloc_pages(n);
+        struct Page *buddy;
 
-    p0 = alloc_pages(2);
-    assert(p0 != NULL);
-    free_pages(p0, 2);
-    assert(nr_free == 5);
+        assert(p != NULL);
+        assert(!PageProperty(p));
+        assert(p->property == order);
+        assert(nr_free_pages() == free_before - n);
 
-    // 10. 恢复启动时的空闲布局并复核
-    buddy_rebuild_from_descriptors();
-    assert(nr_free == (unsigned int)saved_free);
+        // 分裂后目标 order 上应当恰好出现一个空闲伙伴块，就是 p 的另一半
+        assert(buddy_count(order) == 1);
+        buddy = le2page(list_next(&free_lists[order]), page_link);
+        assert(buddy == p + n);
+        assert((page2ppn(buddy) & (n - 1)) == 0);
+
+        free_pages(p, n);
+        assert(nr_free_pages() == free_before);
+        assert(buddy_count(order) == 0);
+        buddy_expect_snapshot(&before);
+    }
+
+    // Case 5：分配两个互为伙伴的块，先释放一个不合并，再释放另一个合并
+    if (split_order >= 0) {
+        unsigned int order = (unsigned int)split_order;
+        size_t n = BUDDY_PAGES(order);
+        size_t free_before = nr_free_pages();
+        struct Page *p = alloc_pages(n);
+        struct Page *q;
+
+        assert(p != NULL);
+        q = alloc_pages(n);
+        assert(q != NULL);
+        assert(q == p + n);
+        assert(nr_free_pages() == free_before - 2 * n);
+
+        // 伙伴 p 仍被占用，q 释放后不能合并
+        free_pages(q, n);
+        assert(nr_free_pages() == free_before - n);
+        assert(buddy_count(order) == 1);
+        assert(le2page(list_next(&free_lists[order]), page_link) == q);
+
+        // 释放 p 后两个伙伴合并成更大的块，直到回到原来的大块
+        free_pages(p, n);
+        assert(nr_free_pages() == free_before);
+        assert(buddy_count(order) == 0);
+        buddy_expect_snapshot(&before);
+    }
+
+    // Case 6：递归合并
+    {
+        size_t held = 0;
+        int drained = 1;
+
+        // 先把所有小 order 的块借出来，只留下 order MAX_ORDER 的大块
+        for (unsigned int order = 0; order < MAX_ORDER; order++) {
+            while (!list_empty(&free_lists[order])) {
+                struct Page *h;
+                if (held == BUDDY_TEST_MAX_BLOCKS) {
+                    drained = 0;
+                    break;
+                }
+                h = alloc_pages(BUDDY_PAGES(order));
+                assert(h != NULL);
+                test_held_page[held] = h;
+                test_held_pages[held] = BUDDY_PAGES(order);
+                held++;
+            }
+            if (!drained) {
+                break;
+            }
+        }
+
+        if (drained && !list_empty(&free_lists[MAX_ORDER])) {
+            size_t free_before = nr_free_pages();
+            struct Page *chain[MAX_ORDER];
+
+            // 从一个 order MAX_ORDER 的块开始，按 order 从小到大分配出一条链
+            chain[0] = alloc_pages(1);
+            assert(chain[0] != NULL);
+            assert(chain[0]->property == 0);
+            for (unsigned int order = 1; order < MAX_ORDER; order++) {
+                chain[order] = alloc_pages(BUDDY_PAGES(order));
+                assert(chain[order] == chain[0] + BUDDY_PAGES(order));
+                assert(chain[order]->property == order);
+            }
+
+            // 按 order 升序释放：每释放一个就应当与已合并的块再合并一级
+            for (unsigned int order = 0; order < MAX_ORDER; order++) {
+                free_pages(chain[order], BUDDY_PAGES(order));
+            }
+
+            // 最终合并回最初的 order MAX_ORDER 块
+            assert(PageProperty(chain[0]));
+            assert(chain[0]->property == MAX_ORDER);
+            assert(buddy_count(MAX_ORDER) == before.order_count[MAX_ORDER]);
+            assert(nr_free_pages() == free_before);
+        }
+
+        for (size_t i = held; i > 0; i--) {
+            free_pages(test_held_page[i - 1], test_held_pages[i - 1]);
+        }
+        buddy_expect_snapshot(&before);
+    }
+
+    // Case 7：空闲不足
+    {
+        size_t held = 0;
+        int complete = 1;
+
+        // 借走所有 order MAX_ORDER 的块，让空闲页不足以满足这种大小的请求
+        while (!list_empty(&free_lists[MAX_ORDER])) {
+            struct Page *h;
+            if (held == BUDDY_TEST_MAX_BLOCKS) {
+                complete = 0;
+                break;
+            }
+            h = alloc_pages(BUDDY_PAGES(MAX_ORDER));
+            assert(h != NULL);
+            test_held_page[held] = h;
+            test_held_pages[held] = BUDDY_PAGES(MAX_ORDER);
+            held++;
+        }
+
+        if (complete && nr_free_pages() < BUDDY_PAGES(MAX_ORDER)) {
+            size_t free_left = nr_free_pages();
+
+            // 需要 order MAX_ORDER 的块，但已经没有这么大的空闲块
+            assert(alloc_pages(BUDDY_PAGES(MAX_ORDER)) == NULL);
+            assert(nr_free_pages() == free_left);
+
+            // 请求页数超过当前空闲页数
+            assert(alloc_pages(free_left + 1) == NULL);
+            assert(nr_free_pages() == free_left);
+
+            buddy_check_lists();
+        }
+
+        for (size_t i = held; i > 0; i--) {
+            free_pages(test_held_page[i - 1], test_held_pages[i - 1]);
+        }
+        buddy_expect_snapshot(&before);
+    }
+
+    // Case 8：多次分配释放后的计数一致性
+    if (nr_free_pages() >= 200) {
+        size_t sizes[6] = {1, 2, 3, 8, 17, 100};
+        struct Page *block[6];
+        size_t free_before = nr_free_pages();
+
+        for (int i = 0; i < 6; i++) {
+            block[i] = alloc_pages(sizes[i]);
+            assert(block[i] != NULL);
+            assert(!PageProperty(block[i]));
+            buddy_check_lists();
+        }
+        assert(nr_free_pages() < free_before);
+
+        for (int i = 5; i >= 0; i--) {
+            free_pages(block[i], sizes[i]);
+            buddy_check_lists();
+        }
+        assert(nr_free_pages() == free_before);
+        buddy_expect_snapshot(&before);
+    }
+
+    // 所有用例结束后，空闲布局应当与测试前一致
     buddy_check_lists();
+    buddy_expect_snapshot(&before);
 }
