@@ -16,7 +16,7 @@
 
 | 成员 | 负责的练习/模块 |
 |------|----------------|
-| 2413396-范珂祎 | [练习或模块名称] |
+| 2413396-范珂祎 | 功能模块二任务一（First-Fit 理解）、任务二（Best-Fit 实现） |
 | 2413406-黄婉文 | 功能模块二任务三，模块二扩展任务challenge，分支任务gdb调试 |
 | 2413671-吕旭婧 | 模块一物理内存初始化，以及后续报告整合 |
 
@@ -24,7 +24,7 @@
 
 | 成员 | 负责的部分 |
 |------|----------------|
-| 2413396-范珂祎 | [练习或模块名称] |
+| 2413396-范珂祎 | 模块二任务一、任务二的说明、规格与提示词、验证 |
 | 2413406-黄婉文 | 实验目的，模块二任务三、扩展任务，分支任务 |
 | 2413671-吕旭婧 | 模块一说明、规格与提示词、验证、模块一 Challenge，以及全章材料整合 |
 
@@ -48,7 +48,7 @@
 
 | 成员 | AI 编程工具 | 底层模型 | 备注 |
 |------|------------|---------|------|
-| 2413396-范珂祎 | [例如：Cline（VS Code插件） / Claude Code（终端 Agent） / DeepSeek Harness等] | [例如：Claude Sonnet 4.5 / GPT-5.5 / DeepSeek-V4-Flash等] | [可选：特殊配置等] |
+| 2413396-范珂祎 | Claude Code（终端 Agent） | Claude Fable 5 | |
 | 2413406-黄婉文 | Codex CLI + VS Code | DeepSeek-V4.1-Flash | 无 |
 | 2413671-吕旭婧 | Codex Desktop | GPT-6 | 通过 SSH 操作 Ubuntu 虚拟机；本次实验未更换模型 |
 
@@ -284,78 +284,103 @@ First-Fit 用一条按物理地址升序排列的双向链表 `free_list` 组织
 
 ### 任务二：实现 Best-Fit 连续物理内存分配算法
 
-**负责人：** [学号-姓名]
+**负责人：** 2413396-范珂祎
 
 #### 模块功能描述
 
 **需要实现/修改的函数：**
 
 ```c
-// 列出本模块涉及的所有函数签名
-void example_function(void);
-int another_function(int arg);
+static void best_fit_init(void);
+static void best_fit_init_memmap(struct Page *base, size_t n);
+static struct Page *best_fit_alloc_pages(size_t n);
+static void best_fit_free_pages(struct Page *base, size_t n);
+static size_t best_fit_nr_free_pages(void);
+// 并在 pmm.c 的 init_pmm_manager() 中把 pmm_manager 切换为 best_fit_pmm_manager
 ```
 
 **功能说明：**
 
-[简要描述该模块的功能，包括：
-- 该模块在整个系统中的作用
-- 需要处理的主要场景
-- 与其他模块的交互关系]
+实现位于 [code/kern/mm/best_fit_pmm.c](../code/kern/mm/best_fit_pmm.c)，保留 `lab2` 注释并将本模块的 `YOUR CODE` 替换为学号 `2413396`；分配器切换位于 [code/kern/mm/pmm.c](../code/kern/mm/pmm.c)。
+
+Best-Fit 与任务一理解的 First-Fit 使用相同的数据结构：一条按物理地址升序的空闲块双向链表 `free_list`，以及空闲页总数 `nr_free`。两者的区别只在 `alloc_pages` 的选择策略——First-Fit 取第一个足够大的块，Best-Fit 遍历整条链表，取「满足需求且剩余最小」的块，从而减少切割后产生的碎块，提高大块内存的可利用率。
+
+因此本模块只在 First-Fit 的基础上改写分配选择逻辑，初始化、登记空闲区、回收合并、空闲页计数均沿用 `default_pmm.c` 的结构。`page_init()` 建立空闲区后，`check_alloc_page()` 调用当前分配器的 `best_fit_check()`；其中断言 `p0 + 4 == p1` 能区分两种算法：只有真正选择「最贴合」的块时才能通过，从而验证实现的是 Best-Fit 而非 First-Fit。
+
+#### 核心实现说明
+
+1. `best_fit_init`：`list_init(&free_list)` 置空链表，`nr_free = 0`。
+2. `best_fit_init_memmap`：与 First-Fit 一致，逐页断言保留状态后清空 `flags/property/ref`，头页 `property = n` 并置 `PG_property`，按地址升序插入，`nr_free += n`。
+3. `best_fit_alloc_pages`：先判断 `n > nr_free` 返回 NULL；否则遍历 `free_list`，记录 `property >= n` 且 `property` 最小的块；切块与 First-Fit 相同——整块切走，或从低地址端切出剩余块并保持地址升序，`nr_free -= n`，返回头页并清除 `PG_property`。
+4. `best_fit_free_pages`：与 First-Fit 一致，按地址升序插入后，先向后（低地址）再向前（高地址）合并相邻空闲块。
+5. `best_fit_nr_free_pages`：返回 `nr_free`。
+6. 在 `pmm.c` 的 `init_pmm_manager()` 中令 `pmm_manager = &best_fit_pmm_manager`，使 `page_init()`、`check_alloc_page()` 实际走 Best-Fit。
 
 #### 最终提示词
 
 以下是经过迭代优化后，最终成功实现该功能的提示词：
 
-````markdown
+````text
+[PROMPT]
 
-[按照提示词模板，给出具体的提示词]
+我的任务是实现 Best-Fit 连续物理内存分配算法，并让系统切换到该分配器。
 
+请基于当前仓库的 code/ 目录开发。保留 lab2 注释，在 code/kern/mm/best_fit_pmm.c 的模块二任务二标记位置实现 Best-Fit 分配器，并将标记改为我的学号 2413396。
+
+完成实现后，在 code/kern/mm/pmm.c 的 init_pmm_manager() 中把 pmm_manager 切换为 best_fit_pmm_manager。
+
+本轮不实现 Buddy、SLUB，不修改已有的 basic_check()、best_fit_check() 等测试函数、公共接口、结构体和地址宏。暂不推送 GitHub。
+
+[RELY]
+
+请以指导书和当前工程定义为准，使用已有的：
+
+- struct pmm_manager、struct Page、free_area_t；
+- free_list、nr_free、le2page 及 list_init、list_add、list_add_before、list_del、list_next、list_prev、list_empty 等链表操作；
+- PageReserved、SetPageProperty、ClearPageProperty、PageProperty、set_page_ref 等页面状态宏；
+- code/kern/mm/default_pmm.c 中的 First-Fit 实现作为参考；
+- pmm.c 中的 init_pmm_manager() 用于切换分配器。
+
+Best-Fit 与 First-Fit 的区别只在 alloc_pages 的选择策略；初始化、登记空闲区、回收合并和空闲页计数沿用 First-Fit 的结构。
+
+[GUARANTEE]
+
+交付可编译的 best_fit_pmm.c 实现，并完成分配器切换。成功初始化后，内核显示 memory management: best_fit_pmm_manager，best_fit_check() 通过并输出 check_alloc_page() succeeded!。
+
+只修改本模块所需的位置。若发现必须修改范围以外的文件，请说明原因，不要顺带修补其他成员的任务。
+
+[SPECIFICATION]
+
+1. best_fit_init() 将空闲链表初始化为空，nr_free 置 0。
+
+2. best_fit_init_memmap(base, n) 登记一段连续空闲区：逐页断言保留状态后清空 flags/property/ref，头页 property 记为 n 并置 PG_property，按物理地址升序插入空闲链表，nr_free += n。
+
+3. best_fit_alloc_pages(n) 分配 n 个连续页：
+   - n 非法或 n > nr_free 时返回 NULL；
+   - 遍历空闲链表，选择 property >= n 且 property 最小的空闲块（Best-Fit 的核心）；
+   - 若块大小恰等于 n，整块从链表删除；若大于 n，从低地址端切出 n 页，剩余 property - n 页在 page + n 处成为新块，插回原位置保持地址升序；
+   - nr_free -= n，返回头页并清除其 PG_property。
+
+4. best_fit_free_pages(base, n) 回收 n 个连续页：逐页断言非保留且非块头后清空标志，头页 property 记为 n 并置 PG_property，按地址升序插入，nr_free += n；随后先与低地址相邻块合并，再与高地址相邻块合并。
+
+5. best_fit_nr_free_pages() 返回当前 nr_free。
+
+6. best_fit_pmm_manager 的字段齐全，name 为 best_fit_pmm_manager。
+
+7. 不改动 basic_check() 与 best_fit_check()，最终 best_fit_check() 通过。best_fit_check() 中的断言 p0 + 4 == p1 用于区分 Best-Fit 与 First-Fit，应原样通过。
 ````
 
 #### 实现迭代过程
 
-本模块的实现经历了 [N] 次迭代，过程如下：
+实际过程为一次实现、多轮验证。Best-Fit 算法代码一次写对、没有修复轮次；多轮都发生在启动骨架与验证方式上，与 `alloc_pages` 的选择策略无关。
 
----
+1. 实现。在 `best_fit_pmm.c` 中实现 `best_fit_init`、`best_fit_init_memmap`、`best_fit_alloc_pages`、`best_fit_free_pages`、`best_fit_nr_free_pages` 五个函数并补齐 `best_fit_pmm_manager` 结构体；在 `pmm.c` 的 `init_pmm_manager()` 中把 `pmm_manager` 切换为 `best_fit_pmm_manager`。
+2. 首次运行：内核停在 OpenSBI。`make qemu` 能完成交叉编译、链接和 objcopy，但内核停在 OpenSBI 横幅、没有任何内核输出。对照指导书发现教程按 QEMU 4.1.1 + OpenSBI v0.6（fw_jump）设计，本机是 QEMU 8.2.2 + OpenSBI v1.3（fw_dynamic）：原 Makefile 用 `-device loader,file=...,addr=0x80200000`，在 fw_dynamic 下 OpenSBI 的跳转地址为 0，直接跳到地址 0 卡死。
+3. 第二轮：改 `-kernel` 后仍卡死。把 qemu/debug/test 目标的加载方式改为 `-kernel $(UCOREIMG)` 后，OpenSBI 能跳转，但切到 Sv39 后仍在物理地址 0x80200000 上取指，触发 `exec_page_fault`（cause 0x0c）。定位到 `entry.S` 的 `boot_page_table_sv39` 只映射了高半区（entry 511），缺少低地址恒等映射。
+4. 第三轮：补恒等映射后正常启动。在 `boot_page_table_sv39` 增加 entry 2 的 0x80000000→0x80000000 恒等映射，并把 `boot_hartid`/`boot_dtb` 的保存挪到 `sfence.vma` 之后。内核正常进入 `kern_init`，输出 `memory management: best_fit_pmm_manager` 与 `check_alloc_page() succeeded!`，其中 `best_fit_check()` 里区分 Best-Fit 与 First-Fit 的断言 `p0 + 4 == p1` 通过。
+5. 评分：`make clean` 后才出逐行打分。首次 `make test` 复用了 `make qemu` 的旧 `.o`（没有 `-D ucore_test`），没有逐行打分；`make clean && make test` 后出现 `grading: 1 / 6 points` 至 `6 / 6 points`。
 
-##### 第一次迭代
-
-如果设计的prompt生成代码后出现问题：
-
-**遇到的问题：**
-- 问题1：问题描述、错误信息和原因分析
-- 问题2：问题描述、错误信息和原因分析
-
-**问题解决策略：**
-- 针对问题1：[说明如何修改提示词]
-- 针对问题2：[说明如何修改提示词]
-
-如果没有问题：
-
-**最终结果：**
-
-经过 [N] 次迭代，该模块最终：
-- ✅ 编译通过
-- ✅ 所有相关测试通过
-- ✅ 功能符合预期
-
-**关键改进点总结（如有）：**
-1. [改进点1：例如，在 [RELY] 中补充了完整的系统调用号定义]
-2. [改进点2：例如，在 [SPECIFICATION] 中明确了异常处理的边界条件]
-3. [改进点3：例如，增加了对用户指针合法性检查的要求]
-
----
-
-##### 第二次迭代（如有）
-
-[按照和第一次迭代相同的格式]
-
----
-
-##### 第三次迭代（如有）
-
-[按照和第一次迭代相同的格式]
+上述启动与评分的排障属于骨架环境与验证方式，不是 Best-Fit 算法错误；没有通过修改断言、补写其他分配器或伪造输出来完成验证。实现、启动排障与评分的实际提示词见 [prompt.md](./prompt.md)。
 
 ---
 
@@ -538,11 +563,36 @@ check_alloc_page() succeeded!
 
 必要日志、驱动和使用方法见 [成员 A 验证材料说明](./verification/member-a/README.md)。首次运行和原始专项测试的两张真实截图已补齐；[截图状态与回看命令](./verification/member-a/screenshots.md) 保留对应路径和可选展示项。其他成员的测试结论与截图由负责成员补充。
 
+### 5.4 成员 B：Best-Fit 分配器验证
+
+在 WSL Ubuntu 24.04 + riscv64-unknown-elf-gcc 15.1.0 + QEMU 8.2.2（OpenSBI v1.3）环境下，用 `make clean && make test` 编译并运行带 `-D ucore_test` 的镜像，逐行评分为：
+
+```text
+memory management: best_fit_pmm_manager
+grading: 1 / 6 points
+grading: 2 / 6 points
+grading: 3 / 6 points
+grading: 4 / 6 points
+grading: 5 / 6 points
+grading: 6 / 6 points
+check_alloc_page() succeeded!
+```
+
+`grading: 6 / 6 points` 说明 Best-Fit 分配器通过全部评分点；`memory management: best_fit_pmm_manager` 确认 `init_pmm_manager()` 已切换到 Best-Fit；`check_alloc_page() succeeded!` 说明 `best_fit_check()` 通过，其中区分 Best-Fit 与 First-Fit 的关键断言 `p0 + 4 == p1` 成立，证明分配器确实选择了「满足需求且剩余最小」的空闲块，而非 First-Fit 的「第一个足够大的块」。
+
+![Best-Fit 评分日志回看](./images/member-b-lab2-best-fit-test.png)
+
+*Best-Fit 评分日志回看*
+
+首次 `make test` 因复用了 `make qemu` 的旧 `.o`（未带 `-D ucore_test`）而没有逐行打分；`make clean` 后重新 `make test` 才得到上述评分。这表明评分开关依赖 `CFLAGS2`（`-D ucore_test`），验证前必须先 `make clean`，避免旧目标文件被复用。
+
 ---
 
 ## 六、实验总结与收获
 
-### 对操作系统的理解
+本章汇总各成员对操作系统的理解、AI 协作开发的经验以及待补事项。
+
+## 对操作系统的理解
 
 以下为成员 A 的模块一总结，其他成员可继续补充各自模块。
 
@@ -557,17 +607,35 @@ check_alloc_page() succeeded!
 
 本模块尚未实现进程地址空间、按需分页、缺页处理、页面置换、交换、并发分配保护和完整的多段内存管理。启动页表和分配算法虽然是依赖条件，但不能算作成员 A 新实现的内容。
 
-### AI 协作开发的经验
+成员 B（模块二任务一、任务二）的理解：
+
+| 模块二内容 | 与 OS 原理的对应关系 |
+|------------|---------------------|
+| `free_list` + `nr_free` | 分配器用空闲块双向链表组织可分配页，`nr_free` 记录空闲总量，是连续分配器最核心的状态 |
+| 分配策略（First-Fit 取第一个足够大的块，Best-Fit 取剩余最小的块） | 同一「分配/回收」接口下可以有不同策略；策略只改 `alloc_pages` 的选择，体现接口与实现的分离 |
+| 切块时剩余块插回链表并保持地址升序 | 分配器必须维护链表不变量，否则后续分配、合并会出错 |
+| 回收时与相邻空闲块合并 | 避免空闲内存碎片化，是连续分配算法能否长期可用的关键 |
+| `p0 + 4 == p1` 断言 | 用可观察行为区分算法：Best-Fit 选最贴合的块导致特定地址关系，与 First-Fit 不同 |
+
+Best-Fit 相比 First-Fit 减少了切割后的碎块，但要遍历整条链表、分配代价更高；两者都没有从根本上解决外部碎片，这正是后续 Buddy、SLUB 的出发点。
+
+## AI 协作开发的经验
 
 成员 A 先要求检查工程，再按实际接口提出需求，随后分别进行运行验证和边界验证。提示词中把修改范围、异常处理和成功状态写清楚，便于检查生成代码是否符合预期。例如，区分 `npage` 与页面总数、要求先检查整个描述符数组能否放下、要求无空闲页时不调用 `init_memmap()`，都能对应到具体检查。
 
 不能只依据 AI 的说明或 QEMU 的退出码判断结果。实际核对源码、日志、函数体哈希和测试驱动后，才将本轮场景记录为通过。实现一次通过不需要编造错误修复；后续测试对规格的补充也应与正式代码修改次数分开记录。其他成员的协作经验由各自补充。
 
-### 待补事项
+成员 B 的经验：
+
+先让 AI 阅读 `default_pmm.c`（First-Fit）理解框架，再在四段式提示词里把「区别」写清楚——[SPECIFICATION] 明确 Best-Fit 的选择规则是「property >= n 且 property 最小」，[RELY] 指明已有测试不可修改，这样生成的代码一次就选对了策略、也保住了 `p0 + 4 == p1` 断言。启动排障时，AI 通过 OpenSBI 停住的位置和 `exec_page_fault` 的 epc 定位到 QEMU 版本差异与 `entry.S` 缺恒等映射，说明把「现象 + 出错地址 + 版本信息」一起给 AI，比只贴日志更容易定位。评分时 AI 指出 `make test` 必须先 `make clean`，因为评分开关在 `CFLAGS2` 里，旧 `.o` 会掩盖 `-D ucore_test`——这提醒我验证前要区分「代码问题」和「构建/环境问题」。
+
+## 待补事项
 
 成员 A：模块一代码、报告、实际提示词、验证材料和两张必要截图已整理，工具与模型信息已确认，个人模块具备提交条件。后续仍需履行统筹职责，整合其他成员材料；256 MiB 和异常场景截图为可选项。
 
 全组：由其他成员补充自己的算法说明、实际提示词、问题与验证记录，核对个人工具信息；完成集成验证并统一报告与分工；全部完成后填写日期，按小组要求整理到 `lab2` 分支。本稿不提前认定这些项目已完成。
+
+成员 B：模块二任务一、任务二代码、报告、实际提示词和 Best-Fit 评分截图已整理，工具与模型信息已确认，个人模块具备提交条件。启动骨架修复（Makefile `-kernel`、`entry.S` 恒等映射）需与全组说明，避免其他成员在各自环境遇到同样问题。
 
 ---
 

@@ -396,6 +396,62 @@ git push origin HEAD:lab2
 
 ## 功能模块二任务二
 
+成员 B：2413396-范珂祎。
+
+以下为成员 B 用于实现 Best-Fit 分配器的提示词。
+
+### B-1 模块二任务二 Best-Fit 实现（原文）
+
+````text
+[PROMPT]
+
+我的任务是实现 Best-Fit 连续物理内存分配算法，并让系统切换到该分配器。
+
+请基于当前仓库的 code/ 目录开发。保留 lab2 注释，在 code/kern/mm/best_fit_pmm.c 的模块二任务二标记位置实现 Best-Fit 分配器，并将标记改为我的学号 2413396。
+
+完成实现后，在 code/kern/mm/pmm.c 的 init_pmm_manager() 中把 pmm_manager 切换为 best_fit_pmm_manager。
+
+本轮不实现 Buddy、SLUB，不修改已有的 basic_check()、best_fit_check() 等测试函数、公共接口、结构体和地址宏。暂不推送 GitHub。
+
+[RELY]
+
+请以指导书和当前工程定义为准，使用已有的：
+
+- struct pmm_manager、struct Page、free_area_t；
+- free_list、nr_free、le2page 及 list_init、list_add、list_add_before、list_del、list_next、list_prev、list_empty 等链表操作；
+- PageReserved、SetPageProperty、ClearPageProperty、PageProperty、set_page_ref 等页面状态宏；
+- code/kern/mm/default_pmm.c 中的 First-Fit 实现作为参考；
+- pmm.c 中的 init_pmm_manager() 用于切换分配器。
+
+Best-Fit 与 First-Fit 的区别只在 alloc_pages 的选择策略；初始化、登记空闲区、回收合并和空闲页计数沿用 First-Fit 的结构。
+
+[GUARANTEE]
+
+交付可编译的 best_fit_pmm.c 实现，并完成分配器切换。成功初始化后，内核显示 memory management: best_fit_pmm_manager，best_fit_check() 通过并输出 check_alloc_page() succeeded!。
+
+只修改本模块所需的位置。若发现必须修改范围以外的文件，请说明原因，不要顺带修补其他成员的任务。
+
+[SPECIFICATION]
+
+1. best_fit_init() 将空闲链表初始化为空，nr_free 置 0。
+
+2. best_fit_init_memmap(base, n) 登记一段连续空闲区：逐页断言保留状态后清空 flags/property/ref，头页 property 记为 n 并置 PG_property，按物理地址升序插入空闲链表，nr_free += n。
+
+3. best_fit_alloc_pages(n) 分配 n 个连续页：
+   - n 非法或 n > nr_free 时返回 NULL；
+   - 遍历空闲链表，选择 property >= n 且 property 最小的空闲块（Best-Fit 的核心）；
+   - 若块大小恰等于 n，整块从链表删除；若大于 n，从低地址端切出 n 页，剩余 property - n 页在 page + n 处成为新块，插回原位置保持地址升序；
+   - nr_free -= n，返回头页并清除其 PG_property。
+
+4. best_fit_free_pages(base, n) 回收 n 个连续页：逐页断言非保留且非块头后清空标志，头页 property 记为 n 并置 PG_property，按地址升序插入，nr_free += n；随后先与低地址相邻块合并，再与高地址相邻块合并。
+
+5. best_fit_nr_free_pages() 返回当前 nr_free。
+
+6. best_fit_pmm_manager 的字段齐全，name 为 best_fit_pmm_manager。
+
+7. 不改动 basic_check() 与 best_fit_check()，最终 best_fit_check() 通过。best_fit_check() 中的断言 p0 + 4 == p1 用于区分 Best-Fit 与 First-Fit，应原样通过。
+````
+
 ## 功能模块二任务三
 
 ## 功能模块二challenge
