@@ -947,7 +947,150 @@ void slub_check(void);
 
 首先MMU会查询其内部的快表TLB，如果TLB命中，MMU会将对应的物理页帧号与虚拟地址中的页内偏移量组合，形成物理地址，完成本次内存访问；如果TLB未命中，MMU就会依据SATP寄存器中存储的页表基址，结合虚拟地址中的多级索引，逐级访问内存中的页表目录，最终在最后一级页表项中找到目标物理页帧号，与页内偏移组合成物理地址，继续完成CPU请求的内存访问，并将这条新的表项存入TLB中。
 
-调试过程一共要用到三个窗口：qemu模拟器、调试qemu进程、qemu中调试ucore内核。
+#### 调试步骤
+
+1. 配置环境
+
+首先在根目录执行以下命令，编译一个调试版的qemu：
+
+```c
+cd qemu-4.1.1
+make distclean   # 清理之前的编译结果
+
+# 重新配置，带上调试选项
+./configure --target-list=riscv32-softmmu,riscv64-softmmu --enable-debug
+
+# 重新编译
+make -j$(nproc)
+```
+
+编译完成之后，可以在riscv64-softmmu目录下找到一个qemu-system-riscv64。在项目的Makefile文件中，把QEMU的地址改为该文件地址。
+
+```c
+ifndef QEMU
+QEMU := $(HOME)/qemu-4.1.1/riscv64-softmmu/qemu-system-riscv64
+endif
+```
+
+2. 调试过程
+   
+调试过程一共要用到三个窗口：qemu模拟器、调试qemu进程、qemu中调试ucore内核。包含两个gdb会话：一个使用普通的gdb命令，附加到QEMU进程本身，用于调试QEMU的源码；另一个使用riscv64-unknown-elf-gdb，通过QEMU提供的调试接口连接，用于调试运行在模拟器中的ucore内核。
+
+在第一个窗口执行make debug，启动调试版QEMU并停在初始状态。
+
+在第二个窗口执行`pgrep -f qemu-system-riscv64`，获取QEMU进程的PID；然后执行sudo gdb启动本机的gdb，执行`attach <PID>`附加到QEMU进程；由于QEMU 写串口或 gdbstub 套接字失败时会触发 SIGPIPE，此时 gdb 默认会停下并打印，把单步调试打断，所以要执行`handle SIGPIPE nostop noprint`指令让调试器忽略这个信号、让 QEMU 继续运行。接下来在该gdb中打以下几个断点，并执行continue。
+
+```c
+# 获取页号，查TLB并判断是否命中
+# 在函数入口点判断传入的地址参数addr，如果是内核入口的虚拟地址再停下
+(gdb) break get_page_addr_code if addr == 0xffffffffc02000d6
+
+# TLB 未命中
+(gdb) break riscv_cpu_tlb_fill if address == 0xffffffffc02000d6
+
+# 页表遍历
+(gdb) break get_physical_address if addr == 0xffffffffc02000d6
+
+# tlb回填，传入页对齐后的地址
+(gdb) break tlb_set_page if vaddr == 0xffffffffc0200000
+
+(gdb) continue
+```
+
+在第三个窗口进入项目目录执行make gdb，在qemu内部调试ucore进程。不过由于已经在qemu进程中会访问的内存地址（内核入口0xffffffffc02000d6）上打好了断点，这里就不需要在具体访存指令上打断点了，可以直接让ucore继续执行。
+
+执行continue，发现终端一已经输出了 OpenSBI 和内核日志，终端二停在 get_page_addr_code。执行p/x addr和p/x env->satp，发现当前触发翻译的虚拟地址确实是0xffffffffc02000d6，根页表基址为0x8000000000080205。
+
+![gdb调试1](./images/gdb1.png)
+![gdb调试2](./images/gdb2.png)
+
+继续单步执行，发现TLB查找未命中，然后遇到断点停在riscv_cpu_tlb_fill的位置。执行调试指令info args，可以得到以下输出，得知access_type = MMU_INST_FETCH 表示当前MMU在执行取指翻译，mmu_idx = 1 表示处于 S 模式（内核态）。
+
+![gdb调试3](./images/gdb3.png)
+
+tlb miss后，cpu会遍历页表查询地址。继续执行，调用get_physical_address并触发断点。执行info args和backtrace，观察到调用链为：get_page_addr_code ->tlb_fill ->riscv_cpu_tlb_fill ->get_physical_address。
+
+![gdb调试4](./images/gdb4.png)
+![gdb调试5](./images/gdb5.png)
+
+进入get_physical_address执行next单步调试，观察页表查询获取物理地址的过程。以下是页表遍历和翻译的部分代码：
+
+```c
+int mode = mmu_idx;    // 特权级： S 模式
+
+if (mode == PRV_M || !riscv_feature(env, RISCV_FEATURE_MMU)) {    // M 模式/无 MMU：不查页表
+    *physical = addr;
+
+base = get_field(env->satp, SATP_PPN) << PGSHIFT;                 // 页表物理基址 = 0x80205000
+
+vm = get_field(env->satp, SATP_MODE);                             // 8 = Sv39
+switch (vm) {
+    levels = 3; ptidxbits = 9; ptesize = 8; break;                // 三级、每级 9 位、表项 8 字节
+
+int ptshift = (levels - 1) * ptidxbits;                           // 最高一级的右移量 = 18
+
+for (i = 0; i < levels; i++, ptshift -= ptidxbits) {              // 从 1 GiB 页开始逐级下降
+
+    target_ulong idx = (addr >> (PGSHIFT + ptshift)) &            // 当前级的 9 位索引
+                       ((1 << ptidxbits) - 1);                
+
+    target_ulong pte_addr = base + idx * ptesize;                 // 页表项物理地址
+
+    target_ulong pte = ldq_phys(cs->as, pte_addr);                // 读出页表项
+    target_ulong ppn = pte >> PTE_PPN_SHIFT;                      // 物理页号
+
+    if (!(pte & PTE_V)) {                                         // 无效项
+    } else if (!(pte & (PTE_R | PTE_W | PTE_X))) {                // 非叶子，进入下一级
+        base = ppn << PGSHIFT;
+    } else if (ppn & ((1ULL << ptshift) - 1)) {                   // 叶子，页号对齐
+
+    target_ulong vpn = addr >> PGSHIFT;                           // 虚拟页号
+    *physical = (ppn | (vpn & ((1L << ptshift) - 1))) << PGSHIFT; // 拼出页基址
+
+    return TRANSLATE_SUCCESS;                                     // 翻译完成
+}   
+
+```
+
+get_physical_address 查找到物理页号，拼出物理地址后，cpu就成功将内核入口的虚拟地址翻译为了物理地址。
+
+然后返回到 riscv_cpu_tlb_fill，此时 QEMU 会调用 tlb_set_page 把地址映射所在页写入 TLB。打印参数信息以及地址，发现vaddr = 0xffffffffc0200000，paddr = 0x80200000，说明0xffffffffc02000d6所在页基址为0xffffffffc0200000，cpu将该页填入TLB；size = 4096 说明回填的页大小为 4KB。
+
+![gdb调试6](./images/gdb6.png)
+
+继续执行，调用返回到get_page_addr_code，重新执行访存，TLB 命中，本次取指完成。
+
+
+#### 调试问题解答
+
+1. 结合关键调用路径以及分支语句，通过调试演示某个访存指令访问的虚拟地址是如何被翻译成一个物理地址的。
+
+答：get_page_addr_code（MMU查询TLB）→ tlb_fill（tlb miss） → riscv_cpu_tlb_fill → get_physical_address（循环查询三级页表获取物理页号，与页内偏移拼接得到物理地址），成功后返回 riscv_cpu_tlb_fill 并由 tlb_set_page 将表项所在4KB页回填到TLB中。具体调试过程已在上一小节中说明。
+
+2. 单步调试页表翻译的部分，解释关键的操作流程。
+
+答：get_physical_address中首先通过env->satp获取根页表基址，然后进入Sv39页表对应的分支：for循环三次遍历三级页表，pteshift 从 18 到 9 到 0 分别对应 1 GB、2 MB、4 KB的页表。每轮 idx 取当前级9位 VPN，pte_addr = base + idx * 8 算出页表项物理地址，读出表项并取 ppn；非叶子则 base = ppn << 12 进下一级，叶子则拼出 *physical。对于 0xffffffffc02000d6，i = 0 已是叶子，所以只循环一次。
+
+3. 在qemu-4.1.1的源码中找到模拟cpu查找tlb的C代码，通过调试说明其中的细节。
+
+答：取指的 TLB 查找在 get_page_addr_code 中：tlb_hit(entry->addr_code, addr) 比较页地址，miss 后调用 tlb_fill 进入 riscv_cpu_tlb_fill。获取页表回填后重新执行取指，同一表项的 addr_code 变为 0xffffffffc0200000，再次访问即命中、不再需要查询页表。
+
+4. qemu中模拟出来的tlb和我们真实cpu中的tlb有什么逻辑上的区别？
+
+答：可以对比虚拟地址开启前后的两次取指。第一次取指 0x80200000 时 satp = 0（Bare），调用链同样经过 get_page_addr_code → tlb_fill → riscv_cpu_tlb_fill，但 get_physical_address 走 Bare 分支直接令 *physical = addr，不读页表，而 tlb_set_page 仍然把这条映射填进 TLB；执行 csrw satp 与 sfence.vma 之后，取指 0x802000d6 才需要遍历页表。这说明 QEMU 的 TLB 是访存必经的软件缓存层，和是否开启分页无关；真实 CPU 的 TLB 只在分页开启时才参与翻译。
+
+另外，真实 TLB 容量有限、有相联度和替换策略，表项由硬件页表遍历器填充，大页可用一个表项覆盖 1GB；QEMU 的 TLB 是一个 CPUTLBEntry 数组，按页号直接索引，没有相联度和替换算法，靠 satp 写入和 sfence.vma 刷新，且 size = 4096 表明它固定按4KB页回填，即使 PTE 是 1GB 大页也只缓存当前这一页。
+
+
+#### 遇到的问题与细节
+
+1. 最开始把终端二的断点打在0xffffffffc0200000，发现没有触发中断。原因是 0x80200000 是 kern_entry 的物理地址，此时还未开启虚拟地址空间，satp 还是 Bare，因此 QEMU 直接返回物理地址、不做页表遍历。把断点地址改为0xffffffffc02000d6，成功进入调试。
+
+2. 单步调试时使用了si指令，结果难以调试。原因是 QEMU 以 -O2 编译，这些内联函数仍带行号信息，si会进入执行内联函数。因此改用next和条件断点。
+
+3. 单步调试get_page_addr_code时发现 TLB 未命中后并没有立刻调用 tlb_fill，而是先执行 VICTIM_TLB_HIT，victim TLB 也不中才查询页表，所以QEMU模拟器的 TLB 其实是主表加 victim 表。
+   
+4. 最初调试时从riscv_cpu_tlb_fill开始，跳过了TLB的查询和调用，过程不完整；通过backtrace指令查询调用链，发现应该从get_page_addr_code开始调试。
 
 ---
 
