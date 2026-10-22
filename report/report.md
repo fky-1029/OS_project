@@ -684,9 +684,33 @@ kern/mm/buddy_system_pmm.c:380:31: error: 'false' undeclared (first use in this 
 **需要实现/修改的函数：**
 
 ```c
-// 列出本模块涉及的所有函数签名
-void example_function(void);
-int another_function(int arg);
+// kern/mm/slub.h —— 对外声明
+void slub_init(void);
+void *slub_alloc(size_t size);
+void slub_free(void *ptr);
+void slub_check(void);
+
+// kern/mm/slub.c —— 对外接口
+void slub_init(void);
+void *slub_alloc(size_t size);
+void slub_free(void *ptr);
+void slub_check(void);
+
+// kern/mm/slub.c —— 内部辅助函数
+static size_t slub_class_size(size_t index);
+static void slub_cache_init(struct slub_cache *cache, size_t object_size);
+static struct slub_header *slub_build_slab(struct slub_cache *cache, struct Page *slab_page);
+
+// kern/mm/slub.c —— 测试辅助函数
+static void slub_test_fill(void *obj, size_t size, uint64_t value);
+static void slub_test_expect(void *obj, size_t size, uint64_t value);
+static void slub_test_all_classes(void);
+static void slub_test_cross_class(void);
+static void slub_test_new_slab(void);
+static void slub_test_boundary(void);
+
+// kern/init/init.c —— 接入
+int kern_init(void);   // pmm_init() 之后调用 slub_init() 与 slub_check()
 ```
 
 **功能说明：**
@@ -919,7 +943,11 @@ void slub_check(void);
 
 **负责人：** 2413406-黄婉文
 
+本任务需要使用双重gdb调试观察页表查询地址的完整流程。当CPU执行一条访存指令时，会产生一个虚拟地址，这个地址被立即送给内存管理单元（MMU）进行处理，完成虚拟地址到物理地址的转换。
 
+首先MMU会查询其内部的快表TLB，如果TLB命中，MMU会将对应的物理页帧号与虚拟地址中的页内偏移量组合，形成物理地址，完成本次内存访问；如果TLB未命中，MMU就会依据SATP寄存器中存储的页表基址，结合虚拟地址中的多级索引，逐级访问内存中的页表目录，最终在最后一级页表项中找到目标物理页帧号，与页内偏移组合成物理地址，继续完成CPU请求的内存访问，并将这条新的表项存入TLB中。
+
+调试过程一共要用到三个窗口：qemu模拟器、调试qemu进程、qemu中调试ucore内核。
 
 ---
 
