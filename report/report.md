@@ -980,9 +980,11 @@ endif
 
 在第二个窗口执行`pgrep -f qemu-system-riscv64`，获取QEMU进程的PID；然后执行sudo gdb启动本机的gdb，执行`attach <PID>`附加到QEMU进程；由于QEMU 写串口或 gdbstub 套接字失败时会触发 SIGPIPE，此时 gdb 默认会停下并打印，把单步调试打断，所以要执行`handle SIGPIPE nostop noprint`指令让调试器忽略这个信号、让 QEMU 继续运行。接下来在该gdb中打以下几个断点，并执行continue。
 
+这里可以把断点打在0xffffffffc02000d6，这是best_fit分配器下开启slub之后，kern_init的第一条访存指令地址。注意其他分配器下可能不同，比如buddy system下第一条访存指令地址在0xffffffffc02000ec，具体地址可以在qemu内部的gdb中在kern_init处打断点，然后通过x/8i $pc查看。
+
 ```c
-# 获取页号，查TLB并判断是否命中
-# 在函数入口点判断传入的地址参数addr，如果是内核入口的虚拟地址再停下
+// 获取页号，查TLB并判断是否命中
+// 在函数入口点判断传入的地址参数addr，如果是内核入口的虚拟地址再停下
 (gdb) break get_page_addr_code if addr == 0xffffffffc02000d6
 
 # TLB 未命中
@@ -997,7 +999,7 @@ endif
 (gdb) continue
 ```
 
-在第三个窗口进入项目目录执行make gdb，在qemu内部调试ucore进程。不过由于已经在qemu进程中会访问的内存地址（内核入口0xffffffffc02000d6）上打好了断点，这里就不需要在具体访存指令上打断点了，可以直接让ucore继续执行。
+在第三个窗口进入项目目录执行make gdb，在qemu内部调试ucore进程。不过由于已经在qemu进程中会访问的内存地址（内核入口0xffffffffc02000d6）上打好了断点，这里就不需要在具体访存指令上打断点了，可以直接让ucore继续执行。也可以用b kern_init在内核入口打断点，并用set remotetimeout unlimited指令避免超时报错；然后通过x/8i $pc查看指令，找到访存指令进行调试。
 
 执行continue，发现终端一已经输出了 OpenSBI 和内核日志，终端二停在 get_page_addr_code。执行p/x addr和p/x env->satp，发现当前触发翻译的虚拟地址确实是0xffffffffc02000d6，根页表基址为0x8000000000080205。
 
