@@ -142,3 +142,55 @@ D:\lvxujing\Download\CodexHomework\操作系统\lab3\OS_project-lab3
 
 禁止批量删除，不执行带批量清理的 clean 或 grade 流程。不修改正式模块二、测试断言或报告。独立验证通过只代表模块一的断点返回路径通过，不宣称时钟、非法指令或完整评分通过。
 ````
+
+## 2413396-范珂祎 · 功能模块二
+
+模块二的核心逻辑一次实现，首轮迭代因漏 `#include <sbi.h>` 报隐式声明错误，修复后即为最终版本。以下为最终成功实现该功能的提示词，已把 `sbi.h` 依赖、`-Dsbadaddr=stval` 构建参数和评分脚本输出要求提前写入 [RELY]/[SPECIFICATION]。
+
+````text
+[PROMPT：任务与操作要求]
+
+我负责操作系统 Lab3 的模块二：中断与异常处理功能。组员已完成模块一（trapentry.S 的 RESTORE_ALL 与 __alltraps）与统筹，请以小组仓库当前 lab3 分支为基础，实现 kern/trap/trap.c 中的 interrupt_handler 与 exception_handler 两个函数。
+
+小组仓库：
+https://github.com/fky-1029/OS_project.git
+
+只修改 code/kern/trap/trap.c 中 "lab3 function2 YOUR CODE" 标记处。保留 lab3 标记，把 YOUR CODE 替换为我的学号 2413396。不修改 trapentry.S、struct trapframe、trap()/trap_dispatch() 等框架与组员已有代码，不修改函数签名，不把两个函数改成 static（tools/test_lab3.c 会 extern 引用它们）。
+
+[RELY：已有条件]
+
+以实际工程源码为准，不要凭记忆描述：
+
+- struct trapframe 布局见 kern/trap/trap.h：gpr（32 个通用寄存器）+ status + epc + badvaddr + cause。中断/异常分发入口 trap_dispatch() 已按 (intptr_t)tf->cause < 0 区分中断与异常，分别调用 interrupt_handler / exception_handler。
+- libs/riscv.h 定义 IRQ_U_SOFT=0、IRQ_S_SOFT=1、IRQ_H_SOFT=2、IRQ_M_SOFT=3、IRQ_U_TIMER=4、IRQ_S_TIMER=5、IRQ_H_TIMER=6、IRQ_M_TIMER=7、IRQ_U_EXT=8、IRQ_S_EXT=9、IRQ_H_EXT=10、IRQ_M_EXT=11，以及 CAUSE_ILLEGAL_INSTRUCTION=0x2、CAUSE_BREAKPOINT=0x3。
+- kern/driver/clock.h 提供 volatile size_t ticks 与 void clock_set_next_event(void)。
+- libs/sbi.h 提供 void sbi_shutdown(void)。注意 trap.c 需要 #include <sbi.h>，否则编译报隐式声明错误。
+- trap.c 顶部已定义 #define TICK_NUM 100 与 static void print_ticks()（打印 "100 ticks"）。
+- kern/debug/kdebug.h 提供 void print_trapframe(struct trapframe *tf)。
+- 新工具链需要 make DEFS=-Dsbadaddr=stval 编译（模块一同样如此）。
+
+[GUARANTEE：本轮交付]
+
+1. 实现 interrupt_handler 与 exception_handler，且能通过 make DEFS=-Dsbadaddr=stval 编译。
+2. 给出 tools/grade.sh 三个测试用例（GRADE_LAB3_CONTEXT / GRADE_LAB3_ILLEGAL / GRADE_LAB3_TIMER）对应的输出要求，并说明实现如何满足。
+3. 说明时钟中断、非法指令、断点各自的处理流程，以及 tf->epc 如何更新。
+
+[SPECIFICATION：行为与验收]
+
+一、interrupt_handler
+
+- 先屏蔽 tf->cause 的最高位得到真实中断号（用 (tf->cause << 1) >> 1）。
+- IRQ_S_TIMER：先 clock_set_next_event() 重设下一次时钟事件；ticks 每次加一；ticks % TICK_NUM == 0 时调用 print_ticks()；累计输出达到 SHUTDOWN_AFTER 次后调用 sbi_shutdown() 关机。SHUTDOWN_AFTER 本实验取 10，保证评分用例的 ticks 能跑到 200 而不会提前关机。
+- IRQ_S_SOFT：输出包含 "Supervisor software interrupt" 的信息；其余软中断/定时器中断做类型区分提示。
+- 无法识别的中断：输出包含 "Unknown interrupt: cause <号>" 的信息，并调用 print_trapframe(tf)。
+
+二、exception_handler
+
+- CAUSE_ILLEGAL_INSTRUCTION：输出包含 "Illegal instruction at" 的信息；CAUSE_BREAKPOINT：输出包含 "Breakpoint at" 的信息。
+- 两者都要把 tf->epc 移动到下一条指令：读 tf->epc 处的 16 位指令，低两位 == 0b11 说明是 32 位指令则 epc += 4，否则是 16 位压缩指令则 epc += 2。
+- 其余异常调用 print_trapframe(tf) 兜底。
+
+三、验收
+
+- 三个评分用例分别以 DEFS=-DGRADE_LAB3_CONTEXT / -DGRADE_LAB3_ILLEGAL / -DGRADE_LAB3_TIMER 编译运行，通过 tools/grade.sh 中全部 grep 检查（关键输出串：Breakpoint at、Illegal instruction at、Supervisor software interrupt、Unknown interrupt: cause 15、cause 0x00000014、100 ticks、ticks=200）。
+````

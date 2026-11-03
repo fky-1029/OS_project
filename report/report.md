@@ -6,7 +6,7 @@
 |------|------|
 | **实验名称** | Lab 3: 中断处理机制 |
 | **小组成员** |  2413396-范珂祎、2413406-黄婉文、2413671-吕旭婧 |
-| **完成日期** | YYYY-MM-DD |
+| **完成日期** | 2026-11-03 |
 
 ### 小组分工
 
@@ -16,7 +16,7 @@
 |------|----------------|
 | 2413406-黄婉文 | 统筹分工，梳理实验逻辑，迁移lab2的代码，测试验证 |
 | 2413671-吕旭婧 | 功能模块一：Trap 上下文恢复与入口 |
-| 2413396-范珂祎 | [练习或模块名称] |
+| 2413396-范珂祎 | 功能模块二：中断与异常处理（interrupt_handler / exception_handler） |
 
 实验报告如何分工？
 
@@ -24,7 +24,7 @@
 |------|----------------|
 | 2413406-黄婉文 | 实验逻辑分析，测试与验证，实验总结与收获 |
 | 2413671-吕旭婧 | 模块一的环境、实现与验证记录，实际提示词及个人心得 |
-| 2413396-范珂祎 | [练习或模块名称] |
+| 2413396-范珂祎 | 模块二的环境、实现与验证记录，实际提示词及个人心得 |
 
 ---
 
@@ -46,7 +46,7 @@
 
 | 成员 | AI 编程工具 | 底层模型 | 备注 |
 |------|------------|---------|------|
-| 2413396-范珂祎 | [例如：Cline（VS Code插件） / Claude Code（终端 Agent） / DeepSeek Harness等] | [例如：Claude Sonnet 4.5 / GPT-5.5 / DeepSeek-V4-Flash等] | [可选：特殊配置等] |
+| 2413396-范珂祎 | Claude Code（VS Code 扩展） | DeepSeek-V4-Pro | 终端环境标识 |
 | 2413671-吕旭婧 | Codex 桌面应用 | GPT-6 系列 | 具体型号未核实 |
 | 2413406-黄婉文 | DeepSeek Harness | DeepSeek-flash | 无 |
 
@@ -157,76 +157,68 @@ RV64 下 `REGBYTES = 8`。帧有 32 个通用寄存器槽和 4 个 CSR 槽，共
 
 #### 模块功能描述
 
+模块二位于 Trap 处理的 C 语言分发层。`trap_dispatch()` 已经按 `(intptr_t)tf->cause < 0`（即 `scause` 最高位）把 Trap 分为中断与异常，分别交给 `interrupt_handler()` 和 `exception_handler()`。本模块在 [trap.c](../code/kern/trap/trap.c) 的 `lab3 function2 2413396` 标记处补全这两个函数，完成具体的中断/异常分类与处理，并保证处理结束后能正确衔接 `__trapret`/`sret` 返回原执行流。
+
 **需要实现/修改的函数：**
 
 ```c
-// 列出本模块涉及的所有函数签名
-void example_function(void);
-int another_function(int arg);
+// kern/trap/trap.c
+void interrupt_handler(struct trapframe *tf);
+void exception_handler(struct trapframe *tf);
 ```
+
+`idt_init()`、`trap()`、`trap_dispatch()`、`print_trapframe()` 以及模块一的 `SAVE_ALL`/`RESTORE_ALL`/`__alltraps` 都由框架或组员提供，本模块不修改。
+
+| 环节 | 作用 |
+|---|---|
+| `interrupt_handler` | 先屏蔽 `tf->cause` 最高位得到真实中断号，再按 `IRQ_S_TIMER`、`IRQ_S_SOFT` 等类型分发。时钟中断必须重设下一次时钟事件，未知中断打印 `Unknown interrupt` 并 `print_trapframe` 兜底。 |
+| `exception_handler` | 按 `tf->cause` 处理 `CAUSE_ILLEGAL_INSTRUCTION` 与 `CAUSE_BREAKPOINT`，输出规定格式信息后把 `tf->epc` 向后移动到下一条指令，其余异常走 `print_trapframe` 兜底。 |
+| 与模块一的衔接 | `tf->cause`、`tf->epc` 都来自模块一 `SAVE_ALL` 保存的现场。本模块对 `tf->epc` 的修改由模块一 `RESTORE_ALL` 写回 `sepc`，最终由 `sret` 决定恢复位置。 |
 
 **功能说明：**
 
-[简要描述该模块的功能，包括：
-- 该模块在整个系统中的作用
-- 需要处理的主要场景
-- 与其他模块的交互关系]
+- **中断处理（interrupt_handler）**：用 `(tf->cause << 1) >> 1` 算术右移屏蔽 `scause` 最高位（中断标志位），得到真实中断号。时钟中断（`IRQ_S_TIMER`）是本实验的核心：每次都要调用 `clock_set_next_event()` 重新设置下一次时钟事件，否则只会收到一次时钟中断；`ticks` 每次加一，当 `ticks % TICK_NUM == 0` 时调用 `print_ticks()` 输出统计信息；累计输出达到 `SHUTDOWN_AFTER` 次后调用 `sbi_shutdown()` 关机。S 态软中断（`IRQ_S_SOFT`）及其他软/定时器中断只做类型提示，无法识别的中断打印 `Unknown interrupt` 并调用 `print_trapframe()` 兜底。
+- **异常处理（exception_handler）**：处理 `CAUSE_ILLEGAL_INSTRUCTION`（非法指令）与 `CAUSE_BREAKPOINT`（断点）。两者都输出包含 `Illegal instruction at` / `Breakpoint at` 的信息，并按 RISC-V 指令编码规则把 `tf->epc` 向后移动到下一条指令：读 `tf->epc` 处的 16 位，低两位为 `0b11` 说明是 32 位指令则 `epc += 4`，否则是 16 位压缩指令则 `epc += 2`，避免 `sret` 后重复执行触发异常的指令。其余异常调用 `print_trapframe()` 兜底。
+
+关键常量由框架提供：`TICK_NUM=100`（`trap.c` 顶部定义）、`IRQ_U_SOFT=0 … IRQ_M_EXT=11` 与 `CAUSE_ILLEGAL_INSTRUCTION=0x2`、`CAUSE_BREAKPOINT=0x3`（`libs/riscv.h`）、`ticks` 与 `clock_set_next_event()`（`kern/driver/clock.h`）、`sbi_shutdown()`（`libs/sbi.h`，故 `trap.c` 需 `#include <sbi.h>`）。
 
 #### 最终提示词
 
-以下是经过迭代优化后，最终成功实现该功能的提示词：
-
-````markdown
-
-[按照提示词模板，给出具体的提示词]
-
-````
+[提示词原文](./prompt.md)。实现提示词规定只改 `lab3 function2` 标记处、把 `YOUR CODE` 替换为学号 2413396，并在 [RELY] 中给出 trapframe 布局与全部依赖的常量/函数定义，在 [SPECIFICATION] 中明确时钟中断的重设、`ticks % TICK_NUM` 的统计输出与 `SHUTDOWN_AFTER` 次后关机、epc 按指令长度前进等约束，并以 `tools/grade.sh` 三个用例的输出要求作为验收标准。
 
 #### 实现迭代过程
 
-本模块的实现经历了 [N] 次迭代，过程如下：
+本模块的实现经历了 **2** 次迭代，过程如下：
 
 ---
 
 ##### 第一次迭代
 
-如果设计的prompt生成代码后出现问题：
-
 **遇到的问题：**
-- 问题1：问题描述、错误信息和原因分析
-- 问题2：问题描述、错误信息和原因分析
+- 问题1：`make` 编译报错 `implicit declaration of function 'sbi_shutdown'`。原因是 `trap.c` 只 include 了 `clock.h`、`trap.h` 等头文件，没有 include 声明 `sbi_shutdown` 的 `sbi.h`。
 
 **问题解决策略：**
-- 针对问题1：[说明如何修改提示词]
-- 针对问题2：[说明如何修改提示词]
+- 针对问题1：在 `trap.c` 顶部补充 `#include <sbi.h>`，让 `sbi_shutdown` 的声明可见。
 
-如果没有问题：
+---
+
+##### 第二次迭代
+
+**遇到的问题（环境/集成，非模块二代码逻辑）：**
+- 问题1：完整构建时 GNU 汇编器报告 `unknown CSR 'sbadaddr'`，这是组员模块一的 `trapentry.S` 在新版 binutils（2.45）下 CSR 名称已改为 `stval`。与模块一环境一节一致，通过 `make DEFS=-Dsbadaddr=stval` 传入兼容宏解决，不改模块一源码。
+- 问题2：本机 QEMU 8.2.2 + OpenSBI v1.3（`fw_dynamic`）下，教程的 `-device loader,file=...,addr=0x80200000` 方式会使 OpenSBI Next Address 为 0 而卡死，且 `entry.S` 切换 `satp` 后高半区映射导致取指页错误。这些是 lab2 已修好的启动坑，本模块验证时用 `-kernel $(UCOREIMG)` 并复用已加的低地址恒等映射。
 
 **最终结果：**
 
-经过 [N] 次迭代，该模块最终：
-- ✅ 编译通过
-- ✅ 所有相关测试通过
+经过 2 次迭代，该模块最终：
+- ✅ 编译通过（`make DEFS=-Dsbadaddr=stval`）
+- ✅ 三个评分用例全部通过（见第五节）：断点返回（GRADE_LAB3_CONTEXT）、非法指令 + 软中断/未知中断兜底（GRADE_LAB3_ILLEGAL）、持续时钟中断与重设（GRADE_LAB3_TIMER）
 - ✅ 功能符合预期
 
-**关键改进点总结（如有）：**
-1. [改进点1：例如，在 [RELY] 中补充了完整的系统调用号定义]
-2. [改进点2：例如，在 [SPECIFICATION] 中明确了异常处理的边界条件]
-3. [改进点3：例如，增加了对用户指针合法性检查的要求]
-
----
-
-##### 第二次迭代（如有）
-
-[按照和第一次迭代相同的格式]
-
----
-
-##### 第三次迭代（如有）
-
-[按照和第一次迭代相同的格式]
-
----
+**关键改进点总结：**
+1. 在 [RELY] 中补充了 `sbi_shutdown` 需要 `#include <sbi.h>` 这一前提，避免首轮迭代漏 include 导致的隐式声明编译错误。
+2. 在 [SPECIFICATION] 中明确 `SHUTDOWN_AFTER` 取值必须满足评分用例需要 `ticks` 跑到 200（≥2 次统计输出）而不关机，最终取 10。
+3. 明确 epc 前进长度按指令字低两位判断（32 位指令 +4，16 位压缩指令 +2），覆盖评分用例中 2 字节与 4 字节断点的不同情况。
 
 
 
@@ -309,6 +301,12 @@ int another_function(int arg);
 这次我把陷阱帧理解为汇编和 C 共同遵守的内存布局。最容易混淆的是两个 `sp` 和两个返回地址。帧上的 x2 槽保存被打断代码的栈指针，处理时的 `sp` 用来访问这份帧。C 返回地址只负责到达 `__trapret`，真正恢复执行的位置由 `sepc` 决定。GDB 在两个位置分别停下来后，我能直接看到 `tf->epc` 先在内存中变化，随后才写入硬件 CSR。
 
 设计提示词时，我先让 Codex 检查仓库布局和分工，再给出明确的接口及修改范围，最后要求用实际指令地址和寄存器值验证结果。反汇编适合逐槽检查，GDB 适合验证状态在具体执行路径中的变化。遇到工具链、构建参数或模拟器行为差异时，先核对报错发生的位置和日志，再决定应调整验证命令、测试脚本还是源码。
+
+### 模块二心得（2413396-范珂祎）
+
+模块二的核心是理解 `scause` 最高位如何区分中断与异常，以及异常处理后为什么要改 `epc` 而不是别的字段。时钟中断的难点在于"重设下一次事件"——如果不调 `clock_set_next_event()`，时钟中断只会触发一次；而 `SHUTDOWN_AFTER` 的取值要留足余量，让评分用例的 `ticks` 能跑到 200 再关机。异常处理的难点在于 RISC-V 指令长度可变：`epc` 前进 4 还是 2 要读指令字低两位判断，否则断点/非法指令返回后会重复触发或跳错位置。
+
+写提示词时，我先让 Claude Code 读仓库和评分脚本，把 `grade.sh` 要求的输出字符串当成验收标准写进 [SPECIFICATION]，再用 `-kernel` + `-Dsbadaddr=stval` 复现三个用例逐个 grep 核对。这让我意识到：对 AI 最有用的不是"讲原理"，而是把依赖的常量/函数定义和验收输出原样放进提示词，让它以真实代码和评分脚本为准，而不是凭记忆猜测。
 
 ---
 
