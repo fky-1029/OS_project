@@ -1,0 +1,6 @@
+make: 进入目录“/home/lvxujing/os-lab/lab3-module1-runtime-hY6obq/code”
++ cc kern/init/entry.S
+1riscv64-unknown-elf-gcc -Ikern/init/ -mcmodel=medany -std=gnu99 -Wno-unused -Werror  -fno-builtin -Wall -O2 -nostdinc -Dsbadaddr=stval -fno-stack-protector -ffunction-sections -fdata-sections -g -Ilibs/ -Ikern/debug/ -Ikern/driver/ -Ikern/trap/ -Ikern/mm/ -Ikern/arch/ -c kern/init/entry.S -o obj/kern/init/entry.o
+make: 1riscv64-unknown-elf-gcc: 没有那个文件或目录
+make: *** [Makefile:118：obj/kern/init/entry.o] 错误 127
+make: 离开目录“/home/lvxujing/os-lab/lab3-module1-runtime-hY6obq/code”

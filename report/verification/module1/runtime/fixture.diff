@@ -1,0 +1,107 @@
+diff -ruN --strip-trailing-cr '--exclude=obj' '--exclude=bin' baseline/kern/init/init.c code/kern/init/init.c
+--- baseline/kern/init/init.c	2026-11-03 15:23:38.560885858 +0800
++++ code/kern/init/init.c	2026-11-03 15:24:21.054687363 +0800
+@@ -9,6 +9,18 @@
+ #include <string.h>
+ #include <trap.h>
+ #include <dtb.h>
++#include <assert.h>
++#include <riscv.h>
++
++extern uintptr_t lab3_module1_probe(void);
++extern volatile unsigned int lab3_module1_trap_count;
++
++__attribute__((noreturn, noinline, noclone))
++void lab3_module1_finished(void) {
++    while (1) {
++        asm volatile("nop");
++    }
++}
+ 
+ int kern_init(void) __attribute__((noreturn));
+ void grade_backtrace(void);
+@@ -32,12 +44,15 @@
+ 
+     idt_init();  // init interrupt descriptor table
+ 
+-    clock_init();   // init clock interrupt
+-    intr_enable();  // enable irq interrupt
+-
+-    /* do nothing */
+-    while (1)
+-        ;
++    intr_disable();
++    write_csr(sie, 0);
++    intr_enable();  // Exercise SPIE -> SIE while every interrupt source is masked.
++    uintptr_t probe_result = lab3_module1_probe();
++    assert(probe_result == 0x3579c);
++    assert(lab3_module1_trap_count == 1);
++    cprintf("LAB3_MODULE1_PROBE_PASS traps=%d result=0x%lx\n",
++            lab3_module1_trap_count, (unsigned long)probe_result);
++    lab3_module1_finished();
+ }
+ 
+ void __attribute__((noinline))
+diff -ruN --strip-trailing-cr '--exclude=obj' '--exclude=bin' baseline/kern/init/lab3_module1_probe.S code/kern/init/lab3_module1_probe.S
+--- baseline/kern/init/lab3_module1_probe.S	1970-01-01 08:00:00.000000000 +0800
++++ code/kern/init/lab3_module1_probe.S	2026-11-03 15:24:21.055687358 +0800
+@@ -0,0 +1,21 @@
++    .text
++    .align 2
++    .globl lab3_module1_probe
++    .type lab3_module1_probe, @function
++lab3_module1_probe:
++    addi sp, sp, -16
++    sd ra, 8(sp)
++    li ra, 0x13579
++    li t0, 0x2468a
++    li a0, 0x3579b
++    .balign 4
++    .globl lab3_module1_breakpoint
++lab3_module1_breakpoint:
++    .4byte 0x00100073
++    .globl lab3_module1_resume
++lab3_module1_resume:
++    addi a0, a0, 1
++    ld ra, 8(sp)
++    addi sp, sp, 16
++    ret
++    .size lab3_module1_probe, .-lab3_module1_probe
+diff -ruN --strip-trailing-cr '--exclude=obj' '--exclude=bin' baseline/kern/trap/trap.c code/kern/trap/trap.c
+--- baseline/kern/trap/trap.c	2026-11-03 15:23:38.742885008 +0800
++++ code/kern/trap/trap.c	2026-11-03 15:24:21.055687358 +0800
+@@ -80,26 +80,14 @@
+     cprintf("  t6       0x%08x\n", gpr->t6);
+ }
+ 
+-//lab3 function2 YOUR CODE
++/* Test-only breakpoint handler. */
++extern char lab3_module1_breakpoint[], lab3_module1_resume[];
++volatile unsigned int lab3_module1_trap_count;
+ 
+-
+-static inline void trap_dispatch(struct trapframe *tf) {
+-    if ((intptr_t)tf->cause < 0) {
+-        // interrupts
+-        interrupt_handler(tf);
+-    } else {
+-        // exceptions
+-        exception_handler(tf);
+-    }
+-}
+-
+-/* *
+- * trap - handles or dispatches an exception/interrupt. if and when trap()
+- * returns,
+- * the code in kern/trap/trapentry.S restores the old CPU state saved in the
+- * trapframe and then uses the iret instruction to return from the exception.
+- * */
+ void trap(struct trapframe *tf) {
+-    // dispatch based on what type of trap occurred
+-    trap_dispatch(tf);
++    assert(tf->cause == CAUSE_BREAKPOINT);
++    assert(tf->epc == (uintptr_t)lab3_module1_breakpoint);
++    assert(lab3_module1_trap_count == 0);
++    lab3_module1_trap_count++;
++    tf->epc = (uintptr_t)lab3_module1_resume;
+ }

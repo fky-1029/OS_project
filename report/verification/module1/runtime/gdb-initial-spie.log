@@ -1,0 +1,36 @@
+The target architecture is set to "riscv:rv64".
+0x0000000000001000 in ?? ()
+Hardware assisted breakpoint 1 at 0xffffffffc0200138: file kern/init/lab3_module1_probe.S, line 10.
+
+Temporary breakpoint 1, 0xffffffffc0200138 in lab3_module1_probe () at kern/init/lab3_module1_probe.S:10
+10	    li a0, 0x3579b
+PRE_BREAK pc=0xffffffffc0200138 resume=0xffffffffc020013c opcode=0x100073 sp=0xffffffffc0204fe0 a0=0x3579b t0=0x2468a ra=0x13579 sstatus=0x8000000000006002 sie=0
+=> 0xffffffffc0200138 <lab3_module1_probe+28>:	ebreak
+Hardware assisted breakpoint 2 at 0xffffffffc0200adc: file kern/trap/trapentry.S, line 105.
+
+Temporary breakpoint 2, __alltraps () at kern/trap/trapentry.S:105
+105	    SAVE_ALL
+ASM_ENTRY pc=0xffffffffc0200adc before_SAVE_ALL sp=0xffffffffc0204fe0 sepc=0xffffffffc0200138 scause=0x3 sstatus=0x8000000000006120
+=> 0xffffffffc0200adc <__alltraps>:	csrw	sscratch,sp
+Hardware assisted breakpoint 3 at 0xffffffffc0200a30: file kern/trap/trap.c, line 88.
+
+Temporary breakpoint 3, trap (tf=0xffffffffc0204ec0) at kern/trap/trap.c:88
+88	    assert(tf->cause == CAUSE_BREAKPOINT);
+C_ENTRY pc=0xffffffffc0200a30 sp=0xffffffffc0204ec0 a0=0xffffffffc0204ec0 saved_sp=0xffffffffc0204fe0 frame_size=288 status=0x8000000000006120 epc=0xffffffffc0200138 cause=0x3 saved_a0=0x3579b saved_t0=0x2468a saved_ra=0x13579 call_ra=0xffffffffc0200b44
+=> 0xffffffffc0200a30 <trap>:	ld	a4,280(a0)
+Hardware assisted breakpoint 4 at 0xffffffffc0200b44: file kern/trap/trapentry.S, line 114.
+
+Temporary breakpoint 4, __trapret () at kern/trap/trapentry.S:114
+114	    RESTORE_ALL
+C_RETURN pc=0xffffffffc0200b44 sp=0xffffffffc0204ec0 frame=0xffffffffc0204ec0 epc=0xffffffffc020013c sepc_before_restore=0xffffffffc0200138 count=1
+Hardware assisted breakpoint 5 at 0xffffffffc0200b8e: file kern/trap/trapentry.S, line 116.
+
+Temporary breakpoint 5, __trapret () at kern/trap/trapentry.S:116
+116	    sret
+PRE_SRET pc=0xffffffffc0200b8e sepc=0xffffffffc020013c sp=0xffffffffc0204fe0 a0=0x3579b t0=0x2468a ra=0x13579 sstatus=0x8000000000006120 SPP=1 SPIE=1 SIE=0
+=> 0xffffffffc0200b8e <__trapret+74>:	sret
+lab3_module1_probe () at kern/init/lab3_module1_probe.S:17
+17	    addi a0, a0, 1
+POST_SRET pc=0xffffffffc020013c sp=0xffffffffc0204fe0 sstatus=0x8000000000006002 SPP=0 SPIE=0 SIE=1
+ASSERT_FAIL POST_SRET SPP=0 SPIE=1 SIE=1
+[Inferior 1 (process 1) detached]

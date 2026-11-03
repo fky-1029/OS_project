@@ -1,0 +1,54 @@
++ set -eo pipefail
+++ dirname -- ./verify.sh
++ cd -- .
++ source /home/lvxujing/compiler-lab/env.sh
+++ export COMPILER_LAB_HOME=/home/lvxujing/compiler-lab
+++ COMPILER_LAB_HOME=/home/lvxujing/compiler-lab
+++ for compiler_lab_bin in /usr/lib/llvm-15/bin "$COMPILER_LAB_HOME/.venv/bin" "$COMPILER_LAB_HOME/tools/riscv-elf-toolchains/bin" "$COMPILER_LAB_HOME/tools/qemu-7.0.0/bin" "$COMPILER_LAB_HOME/tools/ollama/bin"
+++ case ":$PATH:" in
+++ export PATH=/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ PATH=/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ for compiler_lab_bin in /usr/lib/llvm-15/bin "$COMPILER_LAB_HOME/.venv/bin" "$COMPILER_LAB_HOME/tools/riscv-elf-toolchains/bin" "$COMPILER_LAB_HOME/tools/qemu-7.0.0/bin" "$COMPILER_LAB_HOME/tools/ollama/bin"
+++ case ":$PATH:" in
+++ export PATH=/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ PATH=/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ for compiler_lab_bin in /usr/lib/llvm-15/bin "$COMPILER_LAB_HOME/.venv/bin" "$COMPILER_LAB_HOME/tools/riscv-elf-toolchains/bin" "$COMPILER_LAB_HOME/tools/qemu-7.0.0/bin" "$COMPILER_LAB_HOME/tools/ollama/bin"
+++ case ":$PATH:" in
+++ export PATH=/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin:/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ PATH=/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin:/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ for compiler_lab_bin in /usr/lib/llvm-15/bin "$COMPILER_LAB_HOME/.venv/bin" "$COMPILER_LAB_HOME/tools/riscv-elf-toolchains/bin" "$COMPILER_LAB_HOME/tools/qemu-7.0.0/bin" "$COMPILER_LAB_HOME/tools/ollama/bin"
+++ case ":$PATH:" in
+++ export PATH=/home/lvxujing/compiler-lab/tools/qemu-7.0.0/bin:/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin:/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ PATH=/home/lvxujing/compiler-lab/tools/qemu-7.0.0/bin:/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin:/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ for compiler_lab_bin in /usr/lib/llvm-15/bin "$COMPILER_LAB_HOME/.venv/bin" "$COMPILER_LAB_HOME/tools/riscv-elf-toolchains/bin" "$COMPILER_LAB_HOME/tools/qemu-7.0.0/bin" "$COMPILER_LAB_HOME/tools/ollama/bin"
+++ case ":$PATH:" in
+++ export PATH=/home/lvxujing/compiler-lab/tools/ollama/bin:/home/lvxujing/compiler-lab/tools/qemu-7.0.0/bin:/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin:/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ PATH=/home/lvxujing/compiler-lab/tools/ollama/bin:/home/lvxujing/compiler-lab/tools/qemu-7.0.0/bin:/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin:/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ case ":${LD_LIBRARY_PATH:-}:" in
+++ export LD_LIBRARY_PATH=/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/lib
+++ LD_LIBRARY_PATH=/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/lib
+++ unset compiler_lab_bin
++ set -u
++ command -v riscv64-unknown-elf-gcc riscv64-unknown-elf-objdump
+/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin/riscv64-unknown-elf-gcc
+/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin/riscv64-unknown-elf-objdump
++ riscv64-unknown-elf-gcc --version
+riscv64-unknown-elf-gcc (g1b306039ac4) 15.1.0
+Copyright (C) 2025 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
++ riscv64-unknown-elf-objdump --version
+GNU objdump (GNU Binutils) 2.45
+Copyright (C) 2025 Free Software Foundation, Inc.
+这个程序是自由软件；您可以遵循 GNU 通用公共授权版本 3 或
+(您自行选择的) 稍后版本再发布它。
+这个程序不含任何担保。
++ cd code
++ sha256sum kern/trap/trapentry.S libs/riscv.h
+a4f2075245ab4060b85554d79191549a0fd4ac2715595ee510d382c6310cf464  kern/trap/trapentry.S
+4a3ee787f54b12e4163618eed6ce825cbfef1fe3d67152a5971562f15cd2ee8b  libs/riscv.h
++ riscv64-unknown-elf-gcc -Ikern/trap/ -mcmodel=medany -std=gnu99 -Wno-unused -Werror -fno-builtin -Wall -O2 -nostdinc -fno-stack-protector -ffunction-sections -fdata-sections -g -Ilibs/ -Ikern/debug/ -Ikern/driver/ -Ikern/trap/ -Ikern/mm/ -Ikern/arch/ -c kern/trap/trapentry.S -o ../trapentry.o
+kern/trap/trapentry.S: Assembler messages:
+kern/trap/trapentry.S:47: 错误： unknown CSR `sbadaddr'
+kern/trap/trapentry.S:105:  Info: macro invoked from here

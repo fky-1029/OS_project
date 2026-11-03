@@ -1,0 +1,52 @@
++ set -eo pipefail
+++ dirname -- run.sh
++ cd -- .
++ source /home/lvxujing/compiler-lab/env.sh
+++ export COMPILER_LAB_HOME=/home/lvxujing/compiler-lab
+++ COMPILER_LAB_HOME=/home/lvxujing/compiler-lab
+++ for compiler_lab_bin in /usr/lib/llvm-15/bin "$COMPILER_LAB_HOME/.venv/bin" "$COMPILER_LAB_HOME/tools/riscv-elf-toolchains/bin" "$COMPILER_LAB_HOME/tools/qemu-7.0.0/bin" "$COMPILER_LAB_HOME/tools/ollama/bin"
+++ case ":$PATH:" in
+++ export PATH=/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ PATH=/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ for compiler_lab_bin in /usr/lib/llvm-15/bin "$COMPILER_LAB_HOME/.venv/bin" "$COMPILER_LAB_HOME/tools/riscv-elf-toolchains/bin" "$COMPILER_LAB_HOME/tools/qemu-7.0.0/bin" "$COMPILER_LAB_HOME/tools/ollama/bin"
+++ case ":$PATH:" in
+++ export PATH=/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ PATH=/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ for compiler_lab_bin in /usr/lib/llvm-15/bin "$COMPILER_LAB_HOME/.venv/bin" "$COMPILER_LAB_HOME/tools/riscv-elf-toolchains/bin" "$COMPILER_LAB_HOME/tools/qemu-7.0.0/bin" "$COMPILER_LAB_HOME/tools/ollama/bin"
+++ case ":$PATH:" in
+++ export PATH=/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin:/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ PATH=/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin:/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ for compiler_lab_bin in /usr/lib/llvm-15/bin "$COMPILER_LAB_HOME/.venv/bin" "$COMPILER_LAB_HOME/tools/riscv-elf-toolchains/bin" "$COMPILER_LAB_HOME/tools/qemu-7.0.0/bin" "$COMPILER_LAB_HOME/tools/ollama/bin"
+++ case ":$PATH:" in
+++ export PATH=/home/lvxujing/compiler-lab/tools/qemu-7.0.0/bin:/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin:/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ PATH=/home/lvxujing/compiler-lab/tools/qemu-7.0.0/bin:/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin:/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ for compiler_lab_bin in /usr/lib/llvm-15/bin "$COMPILER_LAB_HOME/.venv/bin" "$COMPILER_LAB_HOME/tools/riscv-elf-toolchains/bin" "$COMPILER_LAB_HOME/tools/qemu-7.0.0/bin" "$COMPILER_LAB_HOME/tools/ollama/bin"
+++ case ":$PATH:" in
+++ export PATH=/home/lvxujing/compiler-lab/tools/ollama/bin:/home/lvxujing/compiler-lab/tools/qemu-7.0.0/bin:/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin:/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ PATH=/home/lvxujing/compiler-lab/tools/ollama/bin:/home/lvxujing/compiler-lab/tools/qemu-7.0.0/bin:/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/bin:/home/lvxujing/compiler-lab/.venv/bin:/usr/lib/llvm-15/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+++ case ":${LD_LIBRARY_PATH:-}:" in
+++ export LD_LIBRARY_PATH=/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/lib
+++ LD_LIBRARY_PATH=/home/lvxujing/compiler-lab/tools/riscv-elf-toolchains/lib
+++ unset compiler_lab_bin
++ set -u
++ qemu=/home/lvxujing/os-lab/tools/qemu-4.1.1/bin/qemu-system-riscv64
++ riscv64-unknown-elf-gcc --version
+riscv64-unknown-elf-gcc (g1b306039ac4) 15.1.0
+Copyright (C) 2025 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
++ riscv64-unknown-elf-gdb --version
+GNU gdb (GDB) 16.3.90.20250610-git
+Copyright (C) 2024 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
++ /home/lvxujing/os-lab/tools/qemu-4.1.1/bin/qemu-system-riscv64 --version
+QEMU emulator version 4.1.1
+Copyright (c) 2003-2019 Fabrice Bellard and the QEMU Project developers
++ sha256sum baseline/kern/trap/trapentry.S code/kern/trap/trapentry.S
+a4f2075245ab4060b85554d79191549a0fd4ac2715595ee510d382c6310cf464  baseline/kern/trap/trapentry.S
+a4f2075245ab4060b85554d79191549a0fd4ac2715595ee510d382c6310cf464  code/kern/trap/trapentry.S
++ cmp baseline/kern/trap/trapentry.S code/kern/trap/trapentry.S
++ make -C code V=1 DEFS=-Dsbadaddr=stval
