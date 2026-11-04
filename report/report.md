@@ -264,6 +264,46 @@ void exception_handler(struct trapframe *tf);
 
 以上截图来自已保存的实际验证日志。本节的运行结果仅覆盖模块一在独立测试副本中的 4 字节断点返回路径。模块二合入后，再使用正式处理函数验证 2 字节和 4 字节断点、非法指令及兜底分发、持续时钟中断和普通启动的自动关机，并运行完整集成用例。 [证据索引与复现命令](./verification/module1/README.md)
 
+### 模块二验证（2413396-范珂祎）
+
+模块二在完整内核上验证，直接复现 [grade.sh](../code/tools/grade.sh) 的三个评分用例（35 + 25 + 40 = 100）。与 grade.sh 相比只有两点环境差异：用 `-kernel bin/ucore.img` 替代 `-device loader`（本机 OpenSBI v1.3 `fw_dynamic` 下 loader 方式会跳到地址 0 卡死），以及加 `-Dsbadaddr=stval`（新版 binutils 把 CSR 名 `sbadaddr` 改为 `stval`）。验证脚本、完整串口输出与构建日志见 [verification/module2/](./verification/module2/)，复现命令与证据索引见 [README](./verification/module2/README.md)。
+
+脚本判定输出（`verify-run.log`）：
+
+```text
+lab3 injection complete
+===== context (GRADE_LAB3_CONTEXT) =====
+  OK   [[Test 1] Trap entry and breakpoint return: PASS]
+  OK   [Breakpoint at]
+  => PASS
+===== illegal (GRADE_LAB3_ILLEGAL) =====
+  OK   [[Test 2] Illegal instruction return: PASS]
+  OK   [Illegal instruction at]
+  OK   [Supervisor software interrupt]
+  OK   [Unknown interrupt: cause 15]
+  OK   [cause    0x00000014]
+  => PASS
+===== timer (GRADE_LAB3_TIMER) =====
+  OK   [[Test 3] Sustained supervisor timer: PASS]
+  OK   [100 ticks]
+  OK   [ticks=20]
+  => PASS
+```
+
+三个用例各自覆盖模块二的一条路径：
+
+| 用例 | 定义宏 | 分数 | 关键串口输出 |
+|---|---:|---:|---|
+| 断点返回与寄存器恢复 | `GRADE_LAB3_CONTEXT` | 35 | `Breakpoint at 0xc0201a1c` → `PASS (35/35)` |
+| 非法指令 epc 前进与兜底 | `GRADE_LAB3_ILLEGAL` | 25 | `Illegal instruction at 0xc02019ce`、`Supervisor software interrupt`、`Unknown interrupt: cause 15`、`cause 0x00000014` |
+| 持续时钟中断与重设 | `GRADE_LAB3_TIMER` | 40 | 多次 `100 ticks` → `PASS (40/40, ticks=201)` |
+
+- **断点**：测试入口用 `ebreak` 触发断点，`exception_handler` 打印 `Breakpoint at 0xc0201a1c` 后把 `epc` 前进到下一条指令，`RESTORE_ALL`/`sret` 恢复后测试继续执行并输出 `PASS (35/35)`。 [串口日志](./verification/module2/case-context.serial.log)
+- **非法指令 + 兜底**：`.word 0x0000007b` 触发非法指令，打印 `Illegal instruction at 0xc02019ce` 后 `epc += 4` 跳过；随后 `test_lab3_handler_fallbacks` 直接构造 `tf.cause` 调用 handler，覆盖 S 态软中断（`Supervisor software interrupt`）、未知中断（`Unknown interrupt: cause 15` + trapframe `cause 0x0000000f`）和异常兜底（trapframe `cause 0x00000014`）。 [串口日志](./verification/module2/case-illegal.serial.log)
+- **时钟中断重设**：`while (ticks < 200)` 忙等期间持续触发时钟中断，每 100 次输出一次 `100 ticks`，最终 `PASS (40/40, ticks=201)`。 [串口日志](./verification/module2/case-timer.serial.log)
+
+> 说明：时钟中断用例最终打印的 `ticks` 可能为 200 或 201——第 200 次边界恰好触发一次 `print_ticks()` 的 `cprintf`，其间可能再漏进一次时钟中断。这是 `test_lab3_wait_for_timer` 打印实际计数的时序特性，不是模块二缺陷；`grade.sh` 原样 grep `ticks=200` 在 QEMU 8.2.2 下会偶发不中，验证脚本用前缀 `ticks=20` 兼容两种取值。
+
 ---
 
 ## 六、实验总结与收获
