@@ -6,7 +6,7 @@
 |------|------|
 | **实验名称** | Lab 3: 中断处理机制 |
 | **小组成员** |  2413396-范珂祎、2413406-黄婉文、2413671-吕旭婧 |
-| **完成日期** | 2026-11-03 |
+| **完成日期** | 2026-11-04 |
 
 ### 小组分工
 
@@ -22,9 +22,9 @@
 
 | 成员 | 负责的练习/模块 |
 |------|----------------|
-| 2413406-黄婉文 | 实验逻辑分析，测试与验证，实验总结与收获 |
-| 2413671-吕旭婧 | 模块一的环境、实现与验证记录，实际提示词及个人心得 |
-| 2413396-范珂祎 | 模块二的环境、实现与验证记录，实际提示词及个人心得 |
+| 2413406-黄婉文 | 实验逻辑分析，测试与验证，实验总结与收获，修改报告 |
+| 2413671-吕旭婧 | 模块一实现与验证、提示词，实验收获 |
+| 2413396-范珂祎 | 模块二实现与验证、提示词，实验收获 |
 
 ---
 
@@ -46,19 +46,13 @@
 
 | 成员 | AI 编程工具 | 底层模型 | 备注 |
 |------|------------|---------|------|
-| 2413396-范珂祎 | Claude Code（VS Code 扩展） | DeepSeek-V4-Pro | 终端环境标识 |
-| 2413671-吕旭婧 | Codex 桌面应用 | GPT-6 系列 | 具体型号未核实 |
-| 2413406-黄婉文 | DeepSeek Harness | DeepSeek-flash | 无 |
+| 2413396-范珂祎 | Claude Code（VS Code 扩展） | DeepSeek-V4-Pro | |
+| 2413671-吕旭婧 | Codex 桌面应用 | GPT-6 | |
+| 2413406-黄婉文 | DeepSeek Harness | DeepSeek-flash | |
 
 **说明：**
 - **AI 编程工具**：指具体使用的终端工具、编辑器插件、桌面应用或浏览器界面
 - **底层模型**：指该工具使用的大语言模型及版本
-
-### 模块一实验环境（2413671-吕旭婧）
-
-- 在 Windows 的独立 Lab3 目录开发，远端基线为 `a4916faec6fdbe1b0def3297b631994ace1e4c43`。
-- 通过 `ssh ubuntu-vm` 使用已有 Ubuntu 环境和 `~/compiler-lab/env.sh`。交叉编译器为 `riscv64-unknown-elf-gcc` 15.1.0，GNU objdump 为 2.45。
-- 运行验证使用 QEMU 4.1.1 与 `riscv64-unknown-elf-gdb` 16.3.90.20250610-git。 [汇编日志](./verification/module1/assembly/verification.log) · [运行记录](./verification/module1/runtime/run.log)
 
 
 ---
@@ -95,7 +89,7 @@
 
 在开始lab3的实验之前，首先需要将lab2分页以及best-fit分配管理器相关代码迁移到lab3的代码框架中。主要包括pmm.c中page_init()的实现，以及best_fit_pmm.c中补全相关实现。使用lab2设计的提示词生成相应实验代码，填写到标有“lab2”注释的对应位置。
 
-**需要实现/修改的函数：**
+**实现/修改的函数：**
 
 ```c
 // kern/mm/pmm.c
@@ -118,37 +112,107 @@ static size_t best_fit_nr_free_pages(void);
 
 #### 模块功能描述
 
-在 [trapentry.S](../code/kern/trap/trapentry.S) 的两个 `lab3 function1 2413671` 标记处补全 `RESTORE_ALL` 宏及 `__alltraps` 中的 C 调用。`idt_init()`、`SAVE_ALL`、`struct trapframe`、`trap()/trap_dispatch()` 和 `__trapret` 都由框架提供。
+在 trapentry.S 的两个标记处补全 RESTORE_ALL 宏及 __alltraps 中的 C 调用。`idt_init()`、`SAVE_ALL`、`struct trapframe`、`trap()/trap_dispatch()` 和 `__trapret` 都由框架提供。
 
-| 环节 | 作用 |
+RESTORE_ALL 宏与 SAVE_ALL 对称，负责从内核栈上的 trapframe 中恢复 4 个 CSR（sstatus、sepc、sbadaddr、scause）和通用寄存器 x1、x3..x31，其中 x0 无需恢复、x2(sp) 必须放在最后一条 LOAD 恢复（否则后续 LOAD 基址错误）；__alltraps在 SAVE_ALL 之后把当前 sp 按 RISC-V 调用约定放入 a0，通过 call trap 进入 C 语言处理函数，返回后自然落入框架提供的 __trapret 执行 sret 返回原执行流。
+
+
+**需要实现/修改的函数：**
+
+```c
+// kern/trap/trapentry.S
+RESTORE_ALL    // 汇编宏：与 SAVE_ALL 对称，从 trapframe 恢复 CSR 与通用寄存器（sp 最后恢复）
+__alltraps     // 汇编入口：SAVE_ALL 之后补全 mv a0, sp; call trap（4 字节对齐）
+```
+
+**功能说明：**
+
+以下为主要相关函数功能：
+
+| 指令/函数 | 作用 |
 |---|---|
-| `__alltraps` | `idt_init()` 将 `stvec` 指到这里。入口先执行 `SAVE_ALL`，再用 `mv a0, sp` 将帧地址作为第一个参数，通过 `call trap` 调用 C 函数。 |
-| `SAVE_ALL` | 将原 `sp` 暂存在 `sscratch`，然后在当前内核栈上分配帧，保存寄存器并把原 `sp` 写到 x2 槽。 |
-| `trap(struct trapframe *tf)` | 正式框架把同一帧交给 `trap_dispatch()`，由模块二处理具体中断或异常。异常处理可更新帧中的 `tf->epc`。 |
-| `__trapret` 与 `RESTORE_ALL` | C 函数按调用约定返回到 `__trapret`，此时 `sp` 仍指向帧。`RESTORE_ALL` 读取帧中当前的 `status` 和 `epc` 写回 CSR，再恢复通用寄存器。 |
-| `sret` | 硬件用 `sepc` 设置下一条指令地址，并根据 `sstatus.SPP` 决定返回特权级，将 `SPIE` 的旧值复制到 `SIE`。 |
+| `__alltraps` | 中断处理程序的入口点。 `idt_init()` 让 stvec 寄存器的值指向这里，入口先执行 `SAVE_ALL`，再用 `mv a0, sp` 将帧地址作为第一个参数，通过 `call trap` 调用 C 函数。 |
+| `SAVE_ALL` | 将原 sp 暂存在 sscratch 寄存器，然后在当前内核栈上分配帧，保存寄存器并把原 sp 写到 x2 槽。 |
+| `trap(struct trapframe *tf)` | 调用 `trap_dispatch()`，将 trapframe 分发给对应函数处理具体中断或异常。 |
+| `__trapret` | C 函数按调用约定返回到 `__trapret`，此时 sp 仍指向陷阱帧。 |
+| `RESTORE_ALL` | 与 `SAVE_ALL` 对应，读取帧中的 status 和 epc 写回 CSR，再恢复通用寄存器。 |
+| `sret` | 硬件用 sepc 设置下一条指令地址，并根据 sstatus.SPP 决定返回特权级，将 SPIE 的旧值复制到 SIE。 |
 
-RV64 下 `REGBYTES = 8`。帧有 32 个通用寄存器槽和 4 个 CSR 槽，共 288 字节，保持原有的 16 字节栈对齐。[trap.h](../code/kern/trap/trap.h) 中的字段顺序与汇编对应。
-
-| 字节偏移 | 内容 |
-|---:|---|
-| `8 × n`，`n = 0…31` | `xn`，其中 `+8` 是原 `ra`，`+16` 是原 `sp`。`x0` 恒为零，无需加载。 |
-| `+256`、`+264` | `status` 和 `epc`，返回前分别写回 `sstatus` 和 `sepc`。 |
-| `+272`、`+280` | `badvaddr` 和 `cause`，供诊断与分发使用。 |
-
-先用 `t0` 写回两个 CSR，再从帧中加载原 `t0`。恢复期间，`sp` 仍用于寻址帧中其他字段，所以最后一条加载才用 `+16` 的值恢复原 `sp`。这里有两个返回地址。`call trap` 把 `__trapret` 的地址放进 `ra`，供 C 函数返回。原执行流的 `ra` 在 `SAVE_ALL` 时已经存入帧，随后由 `RESTORE_ALL` 恢复。最后执行的 `sret` 使用的是 `sepc`，所以模块二更新的 `tf->epc` 会决定异常处理后的恢复位置。
 
 #### 最终提示词
 
-[提示词原文](./prompt.md) 按工程检查、模块一实现、运行验证的顺序归档。实现提示词规定沿用实际帧布局和接口，只改两个标记。运行验证提示词要求在独立副本中观察 C 入口的第一条指令、C 返回和 `sret` 前后。
+本模块实现设计了工程检查、实现和运行验证三轮用户提示词，以下为工程实现主要部分的提示词。
+
+````text
+[PROMPT：任务与操作要求]
+
+现在实现 Lab3 模块一：Trap 上下文恢复与入口。
+
+请在独立的 Lab3 目录开发：
+D:\lvxujing\Download\CodexHomework\操作系统\lab3\OS_project-lab3
+
+小组仓库为 https://github.com/fky-1029/OS_project.git。先核对远端 lab3 的最新提交；上一轮检查基于 a4916fa。保留组员后续提交，不切换或覆盖现有 Lab1、Lab2 工作目录。如果模块一标记处已有别人新增的实现，先说明差异，不直接覆盖。
+
+只补齐 code/kern/trap/trapentry.S 中 RESTORE_ALL 和 __alltraps 对应的两处标记。保留 lab3 标记，把本模块的 YOUR CODE 替换为我的学号 2413671。
+
+本轮不修改模块二、构建配置或报告，不提交、不推送。
+
+[RELY：已有接口与约束]
+
+以实际工程中的 SAVE_ALL、struct trapframe、REGBYTES、LOAD/STORE 宏、trap(struct trapframe *tf)、__trapret 和 sret 为依据。
+
+上一轮核对的 RV64 Trap frame 为 288 字节：x2 槽保存入 Trap 前的 sp，status 和 epc 分别位于 256、264 字节偏移。实现前再与当前源码核对，不能另定一套布局。
+
+遵守 RISC-V 调用约定，保留现有 SAVE_ALL、结构体布局、trap() 签名和 __trapret。cause、badvaddr 是供处理与诊断使用的记录，不需要把它们当成 sret 的返回状态来恢复。
+
+[GUARANTEE：交付内容]
+
+1. 完成 RESTORE_ALL 与 __alltraps 的待实现部分。
+2. 给出模块一的修改差异、单独汇编命令和反汇编检查结果。
+3. 简要解释参数怎样传入 C 函数、C 函数返回到哪里，以及原 sp 和返回地址怎样恢复。
+4. 明确列出尚未进行的运行验证。
+
+[SPECIFICATION：行为与验收]
+
+一、入口
+
+SAVE_ALL 完成后，trap() 的第一个参数应指向当前 Trap frame。调用时保持栈对齐和帧的完整性。trap() 正常返回后，应进入现有 __trapret，且 sp 仍指向同一份帧。
+
+二、恢复
+
+恢复内容与 SAVE_ALL 的实际保存布局对应。将帧中当前的 status、epc 恢复到 sstatus、sepc；允许 epc 已由 C 处理函数更新。模块一不自行判断异常类型，不额外调整 epc，也不强制设置返回特权级。
+
+恢复通用寄存器时，不能让写 CSR 使用的临时值覆盖最终寄存器状态。读取帧内其余内容完成后，再恢复帧中记录的原 sp。最终通过现有 sret 返回。
+
+三、本轮验证
+
+在 Ubuntu 中核对已有工具链。使用工程适用的包含路径和编译参数单独汇编 trapentry.S，将产物放在新验证目录，再用 objdump -dr 检查：
+
+- 对 trap 的调用或对应重定位；
+- 调用返回位置与 __trapret 的衔接；
+- status、epc 槽与 CSR 写回；
+- 最后恢复原 sp，再执行 sret。
+
+保存实际命令和结果。单独汇编成功只说明模块一能汇编且产物符合上述检查，不能据此声称整核运行通过。
+
+模块二尚未完成时，不为整核链接临时改写正式 handler。运行时 GDB 检查和评分用例留到下一轮。
+
+如果 Ubuntu 尚未启动，先完成源码实现与静态核对，如实说明汇编验证待运行。不安装软件，不改环境，不执行含批量删除的清理或评分流程。
+````
 
 #### 实现迭代过程
 
-模块一的汇编实现在单独汇编和运行验证阶段保持一致。验证过程中处理了三个问题。
+模块一在验证过程中处理了三个问题：
 
-1. **旧 CSR 名称。** GNU 汇编器报告 `unknown CSR`（`sbadaddr`）。单独汇编时加 `-Dsbadaddr=stval`，整核测试副本通过 `DEFS=-Dsbadaddr=stval` 传入同一兼容宏。已有 `SAVE_ALL` 和 Makefile 保持原样。 [首次汇编日志](./verification/module1/assembly/verification-default.log) · [成功日志](./verification/module1/assembly/verification.log)
-2. **构建参数。** 首次构建误用 `V=1`，Makefile 把 `1` 拼到了编译器命令前。改用 `V=` 后，测试副本成功编译、链接并生成 `bin/ucore.img`。 [首次构建日志](./verification/module1/runtime/build-initial.log) · [成功构建日志](./verification/module1/runtime/build.log)
-3. **GDB 对状态位的预期。** 初版脚本期望 `sret` 后 `SPIE=1`。日志显示当前 QEMU 4.1.1 将旧 `SPIE` 复制给 `SIE` 后清零 `SPIE`。核对模拟器实现后修正了独立测试脚本的预期。`sret` 前的 `sstatus` 仍按帧内保存值逐项比较。 [首次状态检查](./verification/module1/runtime/gdb-initial-spie.log) · [QEMU 4.1.1 的 helper_sret](https://github.com/qemu/qemu/blob/v4.1.1/target/riscv/op_helper.c#L90-L101)
+1. 旧 CSR 名称不被汇编器识别。GNU 汇编器报告 unknown CSR（sbadaddr），原因是当前工具链按较新的 RISC-V 特权级规范使用 stval，而框架代码仍使用旧名 sbadaddr。
+2. 构建参数误用。首次构建使用 V=1，Makefile 将 1 拼接到编译器命令前，导致构建失败；原因是 V 变量用于控制详细输出，赋非空值改变了命令拼接方式。
+3. GDB 对状态位的预期不符。初版脚本期望 sret 后 SPIE=1，但日志显示当前 QEMU 4.1.1 在 sret 时将旧 SPIE 复制给 SIE 后清零 SPIE，导致断言失败；原因是脚本按旧版规范预期，未核对模拟器实现。
+
+问题解决策略：
+
+1. 在汇编层面引入兼容宏——单独汇编时加 -Dsbadaddr=stval，整核测试副本通过 DEFS=-Dsbadaddr=stval 传入同一宏，使旧名映射到新名。
+2. 修正构建命令，改用 V=（空值）后，测试副本成功编译、链接并生成 bin/ucore.img。
+3. 核对 QEMU 模拟器实现后修正独立测试脚本的预期；sret 前的 sstatus 仍按帧内保存值逐项比较，仅调整 sret 后对 SPIE 的断言。
 
 
 ### 功能模块二：中断与异常处理功能
@@ -157,7 +221,7 @@ RV64 下 `REGBYTES = 8`。帧有 32 个通用寄存器槽和 4 个 CSR 槽，共
 
 #### 模块功能描述
 
-模块二位于 Trap 处理的 C 语言分发层。`trap_dispatch()` 已经按 `(intptr_t)tf->cause < 0`（即 `scause` 最高位）把 Trap 分为中断与异常，分别交给 `interrupt_handler()` 和 `exception_handler()`。本模块在 [trap.c](../code/kern/trap/trap.c) 的 `lab3 function2 2413396` 标记处补全这两个函数，完成具体的中断/异常分类与处理，并保证处理结束后能正确衔接 `__trapret`/`sret` 返回原执行流。
+模块二位于 Trap 处理的 C 语言分发层。`trap_dispatch()` 已经按 `(intptr_t)tf->cause < 0`（即 scause 最高位）把 Trap 分为中断与异常，分别交给 `interrupt_handler()` 和 `exception_handler()`。本模块在 trap.c的标记处补全这两个函数，完成具体的中断/异常分类与处理，并保证处理结束后能正确衔接 `__trapret`/`sret` 并返回原执行流。
 
 **需要实现/修改的函数：**
 
@@ -167,35 +231,78 @@ void interrupt_handler(struct trapframe *tf);
 void exception_handler(struct trapframe *tf);
 ```
 
-`idt_init()`、`trap()`、`trap_dispatch()`、`print_trapframe()` 以及模块一的 `SAVE_ALL`/`RESTORE_ALL`/`__alltraps` 都由框架或组员提供，本模块不修改。
-
-| 环节 | 作用 |
-|---|---|
-| `interrupt_handler` | 先屏蔽 `tf->cause` 最高位得到真实中断号，再按 `IRQ_S_TIMER`、`IRQ_S_SOFT` 等类型分发。时钟中断必须重设下一次时钟事件，未知中断打印 `Unknown interrupt` 并 `print_trapframe` 兜底。 |
-| `exception_handler` | 按 `tf->cause` 处理 `CAUSE_ILLEGAL_INSTRUCTION` 与 `CAUSE_BREAKPOINT`，输出规定格式信息后把 `tf->epc` 向后移动到下一条指令，其余异常走 `print_trapframe` 兜底。 |
-| 与模块一的衔接 | `tf->cause`、`tf->epc` 都来自模块一 `SAVE_ALL` 保存的现场。本模块对 `tf->epc` 的修改由模块一 `RESTORE_ALL` 写回 `sepc`，最终由 `sret` 决定恢复位置。 |
-
 **功能说明：**
 
-- **中断处理（interrupt_handler）**：用 `(tf->cause << 1) >> 1` 算术右移屏蔽 `scause` 最高位（中断标志位），得到真实中断号。时钟中断（`IRQ_S_TIMER`）是本实验的核心：每次都要调用 `clock_set_next_event()` 重新设置下一次时钟事件，否则只会收到一次时钟中断；`ticks` 每次加一，当 `ticks % TICK_NUM == 0` 时调用 `print_ticks()` 输出统计信息；累计输出达到 `SHUTDOWN_AFTER` 次后调用 `sbi_shutdown()` 关机。S 态软中断（`IRQ_S_SOFT`）及其他软/定时器中断只做类型提示，无法识别的中断打印 `Unknown interrupt` 并调用 `print_trapframe()` 兜底。
-- **异常处理（exception_handler）**：处理 `CAUSE_ILLEGAL_INSTRUCTION`（非法指令）与 `CAUSE_BREAKPOINT`（断点）。两者都输出包含 `Illegal instruction at` / `Breakpoint at` 的信息，并按 RISC-V 指令编码规则把 `tf->epc` 向后移动到下一条指令：读 `tf->epc` 处的 16 位，低两位为 `0b11` 说明是 32 位指令则 `epc += 4`，否则是 16 位压缩指令则 `epc += 2`，避免 `sret` 后重复执行触发异常的指令。其余异常调用 `print_trapframe()` 兜底。
+| 函数 | 作用 |
+|---|---|
+| `interrupt_handler` | 先屏蔽 tf->cause 最高位得到真实中断号，再按 IRQ_S_TIMER、IRQ_S_SOFT 等类型分发。时钟中断必须重设下一次时钟事件，未知中断打印 `Unknown interrupt` 并由 `print_trapframe` 兜底。 |
+| `exception_handler` | 按 tf->cause 处理 `CAUSE_ILLEGAL_INSTRUCTION` 与 `CAUSE_BREAKPOINT`，输出规定格式信息后把 tf->epc 向后移动到下一条指令，其余异常走 `print_trapframe` 兜底。 |
+| 与模块一的衔接 | tf->cause、tf->epc 都来自模块一 `SAVE_ALL` 保存的现场。本模块对 tf->epc 的修改由模块一 RESTORE_ALL 写回 sepc，最终由 sret 决定恢复位置。 |
 
-关键常量由框架提供：`TICK_NUM=100`（`trap.c` 顶部定义）、`IRQ_U_SOFT=0 … IRQ_M_EXT=11` 与 `CAUSE_ILLEGAL_INSTRUCTION=0x2`、`CAUSE_BREAKPOINT=0x3`（`libs/riscv.h`）、`ticks` 与 `clock_set_next_event()`（`kern/driver/clock.h`）、`sbi_shutdown()`（`libs/sbi.h`，故 `trap.c` 需 `#include <sbi.h>`）。
 
 #### 最终提示词
 
-[提示词原文](./prompt.md)。实现提示词规定只改 `lab3 function2` 标记处、把 `YOUR CODE` 替换为学号 2413396，并在 [RELY] 中给出 trapframe 布局与全部依赖的常量/函数定义，在 [SPECIFICATION] 中明确时钟中断的重设、`ticks % TICK_NUM` 的统计输出与 `SHUTDOWN_AFTER` 次后关机、epc 按指令长度前进等约束，并以 `tools/grade.sh` 三个用例的输出要求作为验收标准。
+提示词在 [RELY] 中给出 trapframe 布局与全部依赖的常量/函数定义，在 [SPECIFICATION] 中明确时钟中断的重设、`ticks % TICK_NUM` 的统计输出与 `SHUTDOWN_AFTER` 次后关机、epc 按指令长度前进等约束，并以 `tools/grade.sh` 三个用例的输出要求作为验收标准。
+
+````text
+[PROMPT：任务与操作要求]
+
+我负责操作系统 Lab3 的模块二：中断与异常处理功能。组员已完成模块一（trapentry.S 的 RESTORE_ALL 与 __alltraps）与统筹，请以小组仓库当前 lab3 分支为基础，实现 kern/trap/trap.c 中的 interrupt_handler 与 exception_handler 两个函数。
+
+小组仓库：
+https://github.com/fky-1029/OS_project.git
+
+只修改 code/kern/trap/trap.c 中 "lab3 function2 YOUR CODE" 标记处。保留 lab3 标记，把 YOUR CODE 替换为我的学号 2413396。不修改 trapentry.S、struct trapframe、trap()/trap_dispatch() 等框架与组员已有代码，不修改函数签名，不把两个函数改成 static（tools/test_lab3.c 会 extern 引用它们）。
+
+[RELY：已有条件]
+
+以实际工程源码为准，不要凭记忆描述：
+
+- struct trapframe 布局见 kern/trap/trap.h：gpr（32 个通用寄存器）+ status + epc + badvaddr + cause。中断/异常分发入口 trap_dispatch() 已按 (intptr_t)tf->cause < 0 区分中断与异常，分别调用 interrupt_handler / exception_handler。
+- libs/riscv.h 定义 IRQ_U_SOFT=0、IRQ_S_SOFT=1、IRQ_H_SOFT=2、IRQ_M_SOFT=3、IRQ_U_TIMER=4、IRQ_S_TIMER=5、IRQ_H_TIMER=6、IRQ_M_TIMER=7、IRQ_U_EXT=8、IRQ_S_EXT=9、IRQ_H_EXT=10、IRQ_M_EXT=11，以及 CAUSE_ILLEGAL_INSTRUCTION=0x2、CAUSE_BREAKPOINT=0x3。
+- kern/driver/clock.h 提供 volatile size_t ticks 与 void clock_set_next_event(void)。
+- libs/sbi.h 提供 void sbi_shutdown(void)。注意 trap.c 需要 #include <sbi.h>，否则编译报隐式声明错误。
+- trap.c 顶部已定义 #define TICK_NUM 100 与 static void print_ticks()（打印 "100 ticks"）。
+- kern/debug/kdebug.h 提供 void print_trapframe(struct trapframe *tf)。
+- 新工具链需要 make DEFS=-Dsbadaddr=stval 编译（模块一同样如此）。
+
+[GUARANTEE：本轮交付]
+
+1. 实现 interrupt_handler 与 exception_handler，且能通过 make DEFS=-Dsbadaddr=stval 编译。
+2. 给出 tools/grade.sh 三个测试用例（GRADE_LAB3_CONTEXT / GRADE_LAB3_ILLEGAL / GRADE_LAB3_TIMER）对应的输出要求，并说明实现如何满足。
+3. 说明时钟中断、非法指令、断点各自的处理流程，以及 tf->epc 如何更新。
+
+[SPECIFICATION：行为与验收]
+
+一、interrupt_handler
+
+- 先屏蔽 tf->cause 的最高位得到真实中断号（用 (tf->cause << 1) >> 1）。
+- IRQ_S_TIMER：先 clock_set_next_event() 重设下一次时钟事件；ticks 每次加一；ticks % TICK_NUM == 0 时调用 print_ticks()；累计输出达到 SHUTDOWN_AFTER 次后调用 sbi_shutdown() 关机。SHUTDOWN_AFTER 本实验取 10，保证评分用例的 ticks 能跑到 200 而不会提前关机。
+- IRQ_S_SOFT：输出包含 "Supervisor software interrupt" 的信息；其余软中断/定时器中断做类型区分提示。
+- 无法识别的中断：输出包含 "Unknown interrupt: cause <号>" 的信息，并调用 print_trapframe(tf)。
+
+二、exception_handler
+
+- CAUSE_ILLEGAL_INSTRUCTION：输出包含 "Illegal instruction at" 的信息；CAUSE_BREAKPOINT：输出包含 "Breakpoint at" 的信息。
+- 两者都要把 tf->epc 移动到下一条指令：读 tf->epc 处的 16 位指令，低两位 == 0b11 说明是 32 位指令则 epc += 4，否则是 16 位压缩指令则 epc += 2。
+- 其余异常调用 print_trapframe(tf) 兜底。
+
+三、验收
+
+- 三个评分用例分别以 DEFS=-DGRADE_LAB3_CONTEXT / -DGRADE_LAB3_ILLEGAL / -DGRADE_LAB3_TIMER 编译运行，通过 tools/grade.sh 中全部 grep 检查（关键输出串：Breakpoint at、Illegal instruction at、Supervisor software interrupt、Unknown interrupt: cause 15、cause 0x00000014、100 ticks、ticks=200）。
+````
+
 
 #### 实现迭代过程
 
-本模块的实现经历了 **2** 次迭代，过程如下：
+本模块的实现经历了 2 次迭代，过程如下：
 
 ---
 
 ##### 第一次迭代
 
 **遇到的问题：**
-- 问题1：`make` 编译报错 `implicit declaration of function 'sbi_shutdown'`。原因是 `trap.c` 只 include 了 `clock.h`、`trap.h` 等头文件，没有 include 声明 `sbi_shutdown` 的 `sbi.h`。
+- 问题1：make 编译报错 `implicit declaration of function 'sbi_shutdown'`。原因是 `trap.c` 只 include 了 `clock.h`、`trap.h` 等头文件，没有 include 声明 `sbi_shutdown` 的 `sbi.h`。
 
 **问题解决策略：**
 - 针对问题1：在 `trap.c` 顶部补充 `#include <sbi.h>`，让 `sbi_shutdown` 的声明可见。
@@ -204,14 +311,16 @@ void exception_handler(struct trapframe *tf);
 
 ##### 第二次迭代
 
-**遇到的问题（环境/集成，非模块二代码逻辑）：**
-- 问题1：完整构建时 GNU 汇编器报告 `unknown CSR 'sbadaddr'`，这是组员模块一的 `trapentry.S` 在新版 binutils（2.45）下 CSR 名称已改为 `stval`。与模块一环境一节一致，通过 `make DEFS=-Dsbadaddr=stval` 传入兼容宏解决，不改模块一源码。
+**遇到的问题：**
+- 问题1：完整构建时 GNU 汇编器报告 `unknown CSR 'sbadaddr'`，这是模块一的 `trapentry.S` 在新版 binutils（2.45）下 CSR 名称已改为 `stval`。与模块一一致，通过 `make DEFS=-Dsbadaddr=stval` 传入兼容宏解决。
+  
 - 问题2：本机 QEMU 8.2.2 + OpenSBI v1.3（`fw_dynamic`）下，教程的 `-device loader,file=...,addr=0x80200000` 方式会使 OpenSBI Next Address 为 0 而卡死，且 `entry.S` 切换 `satp` 后高半区映射导致取指页错误。这些是 lab2 已修好的启动坑，本模块验证时用 `-kernel $(UCOREIMG)` 并复用已加的低地址恒等映射。
+
 
 **最终结果：**
 
 经过 2 次迭代，该模块最终：
-- ✅ 编译通过（`make DEFS=-Dsbadaddr=stval`）
+- ✅ 编译通过
 - ✅ 三个评分用例全部通过（见第五节）：断点返回（GRADE_LAB3_CONTEXT）、非法指令 + 软中断/未知中断兜底（GRADE_LAB3_ILLEGAL）、持续时钟中断与重设（GRADE_LAB3_TIMER）
 - ✅ 功能符合预期
 
@@ -219,7 +328,6 @@ void exception_handler(struct trapframe *tf);
 1. 在 [RELY] 中补充了 `sbi_shutdown` 需要 `#include <sbi.h>` 这一前提，避免首轮迭代漏 include 导致的隐式声明编译错误。
 2. 在 [SPECIFICATION] 中明确 `SHUTDOWN_AFTER` 取值必须满足评分用例需要 `ticks` 跑到 200（≥2 次统计输出）而不关机，最终取 10。
 3. 明确 epc 前进长度按指令字低两位判断（32 位指令 +4，16 位压缩指令 +2），覆盖评分用例中 2 字节与 4 字节断点的不同情况。
-
 
 
 
@@ -331,22 +439,11 @@ lab3 injection complete
 
 ### AI 协作开发的经验
 
-1. 提示词的[RELY]部分要保证准确性，上下文信息不能凭记忆描述，最好从代码中复制工程实际定义，以真实代码为准是提示词有效的前提。
-2. [SPECIFICATION] 中描述约束而非罗列步骤，涉及执行顺序、状态一致性、返回值语义等容易被忽略的约束需要单独列出，生成结果的完整性更高。
-3. 出错时不要直接重写 prompt，先按错误类型定位问题来源，避免无效迭代。编译错误多与 [RELY] 不一致相关，运行错误多与 [SPECIFICATION] 遗漏情形相关。
-4. AI 生成结果需要人工复核，包括函数接口、关键约束、实现效果等，必须完全理解框架以及AI生成代码的逻辑。
+#### 模块一
 
-### 模块一心得（2413671-吕旭婧）
+先让检查仓库布局和分工，再给出明确的接口及修改范围，最后要求用实际指令地址和寄存器值验证结果。反汇编适合逐槽检查，GDB 适合验证状态在具体执行路径中的变化。遇到工具链、构建参数或模拟器行为差异时，先核对报错发生的位置和日志，再决定应调整验证命令、测试脚本还是源码。
 
-这次我把陷阱帧理解为汇编和 C 共同遵守的内存布局。最容易混淆的是两个 `sp` 和两个返回地址。帧上的 x2 槽保存被打断代码的栈指针，处理时的 `sp` 用来访问这份帧。C 返回地址只负责到达 `__trapret`，真正恢复执行的位置由 `sepc` 决定。GDB 在两个位置分别停下来后，我能直接看到 `tf->epc` 先在内存中变化，随后才写入硬件 CSR。
+#### 模块二
 
-设计提示词时，我先让 Codex 检查仓库布局和分工，再给出明确的接口及修改范围，最后要求用实际指令地址和寄存器值验证结果。反汇编适合逐槽检查，GDB 适合验证状态在具体执行路径中的变化。遇到工具链、构建参数或模拟器行为差异时，先核对报错发生的位置和日志，再决定应调整验证命令、测试脚本还是源码。
-
-### 模块二心得（2413396-范珂祎）
-
-模块二的核心是理解 `scause` 最高位如何区分中断与异常，以及异常处理后为什么要改 `epc` 而不是别的字段。时钟中断的难点在于"重设下一次事件"——如果不调 `clock_set_next_event()`，时钟中断只会触发一次；而 `SHUTDOWN_AFTER` 的取值要留足余量，让评分用例的 `ticks` 能跑到 200 再关机。异常处理的难点在于 RISC-V 指令长度可变：`epc` 前进 4 还是 2 要读指令字低两位判断，否则断点/非法指令返回后会重复触发或跳错位置。
-
-写提示词时，我先让 Claude Code 读仓库和评分脚本，把 `grade.sh` 要求的输出字符串当成验收标准写进 [SPECIFICATION]，再用 `-kernel` + `-Dsbadaddr=stval` 复现三个用例逐个 grep 核对。这让我意识到：对 AI 最有用的不是"讲原理"，而是把依赖的常量/函数定义和验收输出原样放进提示词，让它以真实代码和评分脚本为准，而不是凭记忆猜测。
-
----
+写提示词时，先让AI读仓库和评分脚本，把 `grade.sh` 要求的输出字符串当成验收标准写进 [SPECIFICATION]，再用 `-kernel` + `-Dsbadaddr=stval` 复现三个用例逐个 grep 核对。这让我意识到：对 AI 最有用的不是"讲原理"，而是把依赖的常量/函数定义和验收输出原样放进提示词，让它以真实代码和评分脚本为准，而不是凭记忆猜测。
 

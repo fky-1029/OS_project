@@ -2,7 +2,7 @@
 
 ## 2413671-吕旭婧 · 功能模块一
 
-以下按发送顺序归档工程检查、实现和运行验证三轮用户提示词。代码块内保留原文。
+以下按发送顺序归档工程检查、实现和运行验证三轮用户提示词。
 
 ### 1. 工程检查
 
@@ -43,7 +43,7 @@ https://github.com/fky-1029/OS_project.git
 ````text
 [PROMPT：任务与操作要求]
 
-根据上一轮检查，现在实现 Lab3 模块一：Trap 上下文恢复与入口。
+现在实现 Lab3 模块一：Trap 上下文恢复与入口。
 
 请在独立的 Lab3 目录开发：
 D:\lvxujing\Download\CodexHomework\操作系统\lab3\OS_project-lab3
@@ -142,6 +142,7 @@ D:\lvxujing\Download\CodexHomework\操作系统\lab3\OS_project-lab3
 
 禁止批量删除，不执行带批量清理的 clean 或 grade 流程。不修改正式模块二、测试断言或报告。独立验证通过只代表模块一的断点返回路径通过，不宣称时钟、非法指令或完整评分通过。
 ````
+
 
 ## 2413396-范珂祎 · 功能模块二
 
