@@ -331,7 +331,11 @@ https://github.com/fky-1029/OS_project.git
 - 测试通过的结果（make grade），只有一个
 -->
 
+运行make grade时，发现报错set: Illegal option - ，原因是 tools/grade.sh 文件使用了 Windows 的换行符（CRLF）。当脚本在Linux环境下运行时，每一行末尾的\r会被当作命令的一部分，导致 set 命令无法识别紧随其后的选项。在 code 目录下执行以下命令，将 grade.sh 的换行符从 CRLF 转换为 LF：
 
+```bash
+sed -i 's/\r$//' tools/grade.sh
+```
 
 **测试截图：** 小组集成截图待补。
 
