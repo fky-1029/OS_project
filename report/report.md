@@ -14,7 +14,7 @@
 
 | 成员 | 负责的练习/模块 |
 |------|----------------|
-| 2413406-黄婉文 | 统筹分工，梳理实验逻辑，迁移lab2的代码，测试验证 |
+| 2413406-黄婉文 | 统筹分工，梳理实验逻辑，迁移lab2的代码，最终测试与验证 |
 | 2413671-吕旭婧 | 功能模块一：Trap 上下文恢复与入口 |
 | 2413396-范珂祎 | 功能模块二：中断与异常处理（interrupt_handler / exception_handler） |
 
@@ -36,7 +36,7 @@
 
 1. 学习riscv的中断相关知识，以及中断处理的完整流程；
 2. 理解中断前后如何进行上下文环境的保存与恢复；
-3. 掌握断点中断和时钟中断的处理方法。
+3. 掌握断点异常和时钟中断的处理方法。
 
 ---
 
@@ -59,12 +59,12 @@
 
 ## 三、实验整体逻辑分析
 
-### 2.1 本章节的逻辑主线
+### 3.1 本章节的逻辑主线
 
 本章围绕RISC-V架构下的 Trap 中断与异常机制展开，核心是实现异常与中断实现、正确保存现场、分类处理、恢复原执行流这一流程。主要包含三部分内容：实现 Trap 上下文的保存与恢复（SAVE_ALL/RESTORE_ALL），建立汇编入口 __alltraps 与 C 处理函数 trap() 之间的调用与返回，以及完成时钟中断的周期性触发与重设、非法指令和断点异常的处理与 epc 修正，从而使内核具备完整的中断处理能力。
 
 
-### 2.2 功能的逐步实现
+### 3.2 功能的逐步实现
 
 本章实验按照"底层上下文管理 → 入口与返回闭环 → 高层分类处理"的顺序逐步推进，每一层都为下一层提供必要前提：
 
@@ -202,17 +202,13 @@ SAVE_ALL 完成后，trap() 的第一个参数应指向当前 Trap frame。调�
 
 #### 实现迭代过程
 
-模块一在验证过程中处理了三个问题：
+模块一在验证过程中处理了以下问题：
 
-1. 旧 CSR 名称不被汇编器识别。GNU 汇编器报告 unknown CSR（sbadaddr），原因是当前工具链按较新的 RISC-V 特权级规范使用 stval，而框架代码仍使用旧名 sbadaddr。
-2. 构建参数误用。首次构建使用 V=1，Makefile 将 1 拼接到编译器命令前，导致构建失败；原因是 V 变量用于控制详细输出，赋非空值改变了命令拼接方式。
-3. GDB 对状态位的预期不符。初版脚本期望 sret 后 SPIE=1，但日志显示当前 QEMU 4.1.1 在 sret 时将旧 SPIE 复制给 SIE 后清零 SPIE，导致断言失败；原因是脚本按旧版规范预期，未核对模拟器实现。
+旧 CSR 名称不被汇编器识别。GNU 汇编器报告 unknown CSR（sbadaddr），原因是当前工具链按较新的 RISC-V 特权级规范使用 stval，而框架代码仍使用旧名 sbadaddr。
 
 问题解决策略：
 
-1. 在汇编层面引入兼容宏——单独汇编时加 -Dsbadaddr=stval，整核测试副本通过 DEFS=-Dsbadaddr=stval 传入同一宏，使旧名映射到新名。
-2. 修正构建命令，改用 V=（空值）后，测试副本成功编译、链接并生成 bin/ucore.img。
-3. 核对 QEMU 模拟器实现后修正独立测试脚本的预期；sret 前的 sstatus 仍按帧内保存值逐项比较，仅调整 sret 后对 SPIE 的断言。
+在汇编层面引入兼容宏——单独汇编时加 -Dsbadaddr=stval，整核测试副本通过 DEFS=-Dsbadaddr=stval 传入同一宏，使旧名映射到新名。
 
 
 ### 功能模块二：中断与异常处理功能
@@ -313,14 +309,14 @@ https://github.com/fky-1029/OS_project.git
 
 **遇到的问题：**
 
-完整构建时 GNU 汇编器报告 `unknown CSR 'sbadaddr'`，与模块一相同，这是因为在新版 binutils（2.45）下 CSR 名称已改为 `stval`。为解决sbadaddr与stval的重命名，方便起见，直接在 libs/riscv.h 中添加宏定义 #define sbadaddr stval。
+完整构建时 GNU 汇编器报告 `unknown CSR 'sbadaddr'`，与模块一相同，这是因为在新版 binutils（2.45）下 CSR 名称已改为 `stval`。为解决sbadaddr与stval的重命名，方便起见直接在 libs/riscv.h 中添加宏定义 #define sbadaddr stval。
   
 
 **最终结果：**
 
 经过 2 次迭代，该模块最终：
 - ✅ 编译通过
-- ✅ 三个评分用例全部通过（见第五节）：断点返回（GRADE_LAB3_CONTEXT）、非法指令 + 软中断/未知中断兜底（GRADE_LAB3_ILLEGAL）、持续时钟中断与重设（GRADE_LAB3_TIMER）
+- ✅ 三个评分用例全部通过（见第五节）
 - ✅ 功能符合预期
 
 
@@ -331,87 +327,23 @@ https://github.com/fky-1029/OS_project.git
 - 测试通过的结果（make grade），只有一个
 -->
 
-运行make grade时，发现报错set: Illegal option - ，原因是 tools/grade.sh 文件使用了 Windows 的换行符（CRLF）。当脚本在Linux环境下运行时，每一行末尾的\r会被当作命令的一部分，导致 set 命令无法识别紧随其后的选项。在 code 目录下执行以下命令，将 grade.sh 的换行符从 CRLF 转换为 LF：
+首先运行make qemu，成功输出初始化信息与时钟中断，并且计时器达到SHUTDOWN_AFTER = 10条件时主动退出。
+
+![make qemu](./images/qemu.png)
+
+然后运行make grade。发现报错set: Illegal option - ，原因是 tools/grade.sh 文件使用了 Windows 的换行符（CRLF）。当脚本在Linux环境下运行时，每一行末尾的\r会被当作命令的一部分，导致 set 命令无法识别紧随其后的选项。在 code 目录下执行以下命令，将 grade.sh 的换行符从 CRLF 转换为 LF：
 
 ```bash
 sed -i 's/\r$//' tools/grade.sh
 ```
 
-**测试截图：** 小组集成截图待补。
+再次执行make grade，编译执行三个测试用例：中断入口、寄存器恢复、断点；非法指令异常处理与返回；时钟中断测试与返回。三个测试全部满分通过，总分100/100。
 
-### 模块一验证（2413671-吕旭婧）
+**测试截图：** 
+![trap entry, register restore, and breakpoint EPC](./images/breakpoint.png)
+![illegal instruction EPC advance and return](./images/illegal_inst.png)
+![re-armed supervisor timer and repeated trap return以及总分](./images/timer.png)
 
-#### 单独汇编和反汇编
-
-在 Ubuntu 中单独汇编 `trapentry.S`，生成 RV64 ELF 对象。`objdump -dr` 显示对 `trap` 的调用重定位，且调用序列之后紧接 `__trapret`。逐项核对了 31 个可写通用寄存器的恢复槽位、`256(sp)` 和 `264(sp)` 写回的 CSR，以及最后的 `ld sp,16(sp)` 和 `sret`。这是对目标文件的静态检查。 [反汇编](./verification/module1/assembly/trapentry.objdump.txt) · [实际汇编命令](./verification/module1/assembly/verify.sh)
-
-![模块一反汇编日志回看：trap 调用重定位、CSR 写回、恢复 sp 和 sret](./images/module1-trapentry-objdump.png)
-
-#### QEMU/GDB 断点返回
-
-在 Ubuntu 独立副本中加入测试入口及只处理这条断点的最小 `trap()`，跳过时钟初始化并将 `sie` 清零以屏蔽中断源。通过 `cmp` 和 SHA-256 核对测试副本与正式版的 `trapentry.S` 逐字节一致。副本实际完成构建，并在 QEMU 4.1.1 下运行。 [副本差异](./verification/module1/runtime/fixture.diff) · [运行记录](./verification/module1/runtime/run.log)
-
-本次用指令字 `0x00100073` 触发 **4 字节 `ebreak`**。反汇编和 GDB 都记录了断点地址 `0xffffffffc0200138` 与下一条指令地址 `0xffffffffc020013c`。 [测试指令反汇编](./verification/module1/runtime/disassembly.txt)
-
-| 检查位置 | 实测结果 |
-|---|---|
-| `__alltraps` 第一条指令 | `SAVE_ALL` 前原 `sp` 为 `0xffffffffc0204fe0`，`scause=3`。 |
-| `trap()` 第一条指令 | `a0 = sp = 0xffffffffc0204ec0`，比原栈指针低 288 字节。帧的 x2 槽为 `0xffffffffc0204fe0`。 |
-| C 返回到 `__trapret` | `sp` 仍为 `0xffffffffc0204ec0`。`tf->epc` 已从 `0xffffffffc0200138` 改为 `0xffffffffc020013c`，硬件 `sepc` 此时仍为断点地址。 |
-| `sret` 执行前 | `sepc` 已写为 `0xffffffffc020013c`，原 `sp` 已恢复。`a0=0x3579b`、`t0=0x2468a`、`ra=0x13579` 与触发前一致。 |
-| 单步执行 `sret` 后 | PC 到达 `0xffffffffc020013c`。下一条 `addi a0,a0,1` 执行后，`a0=0x3579c`。 |
-
-`sret` 前 `sstatus=0x8000000000006120`，与帧中保存值相等。单步后为 `0x8000000000006002`，其中 `SPP/SPIE/SIE` 由 `1/1/0` 变成 `0/0/1`，这是本次 QEMU 的 `sret` 行为。GDB 和串口分别记录 `GDB_MODULE1_PASS traps=1` 与 `LAB3_MODULE1_PROBE_PASS traps=1 result=0x3579c`。运行时核对的是 `sp` 及代表性寄存器 `a0`、`t0`、`ra`。 [GDB 日志](./verification/module1/runtime/gdb.log) · [串口日志](./verification/module1/runtime/qemu-serial.log)
-
-![模块一 GDB 日志回看：4 字节 ebreak 的入口传参、sret 前后状态及单次 Trap 检查通过](./images/module1-gdb-trap-return.png)
-
-![模块一 QEMU 串口日志回看：断点只触发一次，返回后指令正常执行](./images/module1-qemu-probe-pass.png)
-
-#### 验证范围
-
-以上截图来自已保存的实际验证日志。本节的运行结果仅覆盖模块一在独立测试副本中的 4 字节断点返回路径。模块二合入后，再使用正式处理函数验证 2 字节和 4 字节断点、非法指令及兜底分发、持续时钟中断和普通启动的自动关机，并运行完整集成用例。 [证据索引与复现命令](./verification/module1/README.md)
-
-### 模块二验证（2413396-范珂祎）
-
-模块二在完整内核上验证，直接复现 [grade.sh](../code/tools/grade.sh) 的三个评分用例（35 + 25 + 40 = 100）。与 grade.sh 相比只有两点环境差异：用 `-kernel bin/ucore.img` 替代 `-device loader`（本机 OpenSBI v1.3 `fw_dynamic` 下 loader 方式会跳到地址 0 卡死），以及加 `-Dsbadaddr=stval`（新版 binutils 把 CSR 名 `sbadaddr` 改为 `stval`）。验证脚本、完整串口输出与构建日志见 [verification/module2/](./verification/module2/)，复现命令与证据索引见 [README](./verification/module2/README.md)。
-
-脚本判定输出（`verify-run.log`）：
-
-```text
-lab3 injection complete
-===== context (GRADE_LAB3_CONTEXT) =====
-  OK   [[Test 1] Trap entry and breakpoint return: PASS]
-  OK   [Breakpoint at]
-  => PASS
-===== illegal (GRADE_LAB3_ILLEGAL) =====
-  OK   [[Test 2] Illegal instruction return: PASS]
-  OK   [Illegal instruction at]
-  OK   [Supervisor software interrupt]
-  OK   [Unknown interrupt: cause 15]
-  OK   [cause    0x00000014]
-  => PASS
-===== timer (GRADE_LAB3_TIMER) =====
-  OK   [[Test 3] Sustained supervisor timer: PASS]
-  OK   [100 ticks]
-  OK   [ticks=20]
-  => PASS
-```
-
-三个用例各自覆盖模块二的一条路径：
-
-| 用例 | 定义宏 | 分数 | 关键串口输出 |
-|---|---:|---:|---|
-| 断点返回与寄存器恢复 | `GRADE_LAB3_CONTEXT` | 35 | `Breakpoint at 0xc0201a1c` → `PASS (35/35)` |
-| 非法指令 epc 前进与兜底 | `GRADE_LAB3_ILLEGAL` | 25 | `Illegal instruction at 0xc02019ce`、`Supervisor software interrupt`、`Unknown interrupt: cause 15`、`cause 0x00000014` |
-| 持续时钟中断与重设 | `GRADE_LAB3_TIMER` | 40 | 多次 `100 ticks` → `PASS (40/40, ticks=201)` |
-
-- **断点**：测试入口用 `ebreak` 触发断点，`exception_handler` 打印 `Breakpoint at 0xc0201a1c` 后把 `epc` 前进到下一条指令，`RESTORE_ALL`/`sret` 恢复后测试继续执行并输出 `PASS (35/35)`。 [串口日志](./verification/module2/case-context.serial.log)
-- **非法指令 + 兜底**：`.word 0x0000007b` 触发非法指令，打印 `Illegal instruction at 0xc02019ce` 后 `epc += 4` 跳过；随后 `test_lab3_handler_fallbacks` 直接构造 `tf.cause` 调用 handler，覆盖 S 态软中断（`Supervisor software interrupt`）、未知中断（`Unknown interrupt: cause 15` + trapframe `cause 0x0000000f`）和异常兜底（trapframe `cause 0x00000014`）。 [串口日志](./verification/module2/case-illegal.serial.log)
-- **时钟中断重设**：`while (ticks < 200)` 忙等期间持续触发时钟中断，每 100 次输出一次 `100 ticks`，最终 `PASS (40/40, ticks=201)`。 [串口日志](./verification/module2/case-timer.serial.log)
-
-> 说明：时钟中断用例最终打印的 `ticks` 可能为 200 或 201——第 200 次边界恰好触发一次 `print_ticks()` 的 `cprintf`，其间可能再漏进一次时钟中断。这是 `test_lab3_wait_for_timer` 打印实际计数的时序特性，不是模块二缺陷；`grade.sh` 原样 grep `ticks=200` 在 QEMU 8.2.2 下会偶发不中，验证脚本用前缀 `ticks=20` 兼容两种取值。
-
----
 
 ## 六、实验总结与收获
 
@@ -444,5 +376,5 @@ lab3 injection complete
 
 #### 模块二
 
-写提示词时，先让AI读仓库和评分脚本，把 `grade.sh` 要求的输出字符串当成验收标准写进 [SPECIFICATION]，再用 `-kernel` + `-Dsbadaddr=stval` 复现三个用例逐个 grep 核对。这让我意识到：对 AI 最有用的不是"讲原理"，而是把依赖的常量/函数定义和验收输出原样放进提示词，让它以真实代码和评分脚本为准，而不是凭记忆猜测。
+写提示词时，先让AI读仓库和评分脚本，把 `grade.sh` 要求的输出字符串当成验收标准写进 [SPECIFICATION]，把依赖的常量/函数定义和验收输出原样放进提示词，让AI以真实代码和评分脚本为准，而不是凭记忆猜测。
 
