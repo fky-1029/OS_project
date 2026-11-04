@@ -1,5 +1,7 @@
 // See LICENSE for license details.
 
+#define sbadaddr stval
+
 #ifndef __LIBS_RISCV_H__
 #define __LIBS_RISCV_H__
 

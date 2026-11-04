@@ -312,10 +312,9 @@ https://github.com/fky-1029/OS_project.git
 ##### 第二次迭代
 
 **遇到的问题：**
-- 问题1：完整构建时 GNU 汇编器报告 `unknown CSR 'sbadaddr'`，这是模块一的 `trapentry.S` 在新版 binutils（2.45）下 CSR 名称已改为 `stval`。与模块一一致，通过 `make DEFS=-Dsbadaddr=stval` 传入兼容宏解决。
-  
-- 问题2：本机 QEMU 8.2.2 + OpenSBI v1.3（`fw_dynamic`）下，教程的 `-device loader,file=...,addr=0x80200000` 方式会使 OpenSBI Next Address 为 0 而卡死，且 `entry.S` 切换 `satp` 后高半区映射导致取指页错误。这些是 lab2 已修好的启动坑，本模块验证时用 `-kernel $(UCOREIMG)` 并复用已加的低地址恒等映射。
 
+完整构建时 GNU 汇编器报告 `unknown CSR 'sbadaddr'`，与模块一相同，这是因为在新版 binutils（2.45）下 CSR 名称已改为 `stval`。为解决sbadaddr与stval的重命名，方便起见，直接在 libs/riscv.h 中添加宏定义 #define sbadaddr stval。
+  
 
 **最终结果：**
 
@@ -324,12 +323,6 @@ https://github.com/fky-1029/OS_project.git
 - ✅ 三个评分用例全部通过（见第五节）：断点返回（GRADE_LAB3_CONTEXT）、非法指令 + 软中断/未知中断兜底（GRADE_LAB3_ILLEGAL）、持续时钟中断与重设（GRADE_LAB3_TIMER）
 - ✅ 功能符合预期
 
-**关键改进点总结：**
-1. 在 [RELY] 中补充了 `sbi_shutdown` 需要 `#include <sbi.h>` 这一前提，避免首轮迭代漏 include 导致的隐式声明编译错误。
-2. 在 [SPECIFICATION] 中明确 `SHUTDOWN_AFTER` 取值必须满足评分用例需要 `ticks` 跑到 200（≥2 次统计输出）而不关机，最终取 10。
-3. 明确 epc 前进长度按指令字低两位判断（32 位指令 +4，16 位压缩指令 +2），覆盖评分用例中 2 字节与 4 字节断点的不同情况。
-
-
 
 ## 五、测试与验证
 
@@ -337,6 +330,8 @@ https://github.com/fky-1029/OS_project.git
 - 编译及运行成功的输出（make qemu），可能有多个
 - 测试通过的结果（make grade），只有一个
 -->
+
+
 
 **测试截图：** 小组集成截图待补。
 
