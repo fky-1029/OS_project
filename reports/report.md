@@ -14,7 +14,7 @@
 
 | 成员 | 负责的练习/模块 |
 |------|----------------|
-| 2413406-黄婉文 | [练习或模块名称] |
+| 2413406-黄婉文 | lab2/lab3代码迁移 |
 | 2413396-范珂祎 | [练习或模块名称] |
 | 2413671-吕旭婧 | [练习或模块名称] |
 
@@ -22,7 +22,7 @@
 
 | 成员 | 负责的报告部分 |
 |------|----------------|
-| 2413406-黄婉文 | [练习或模块名称] |
+| 2413406-黄婉文 | 环境准备 |
 | 2413396-范珂祎 | [练习或模块名称] |
 | 2413671-吕旭婧 | [练习或模块名称] |
 
@@ -82,6 +82,40 @@
 说明：本部分按照 exercises 文档中的练习顺序组织
 每个功能模块或者练习中可能包含多项任务，请根据实际情况调整
 -->
+
+### 环境准备
+
+**负责人：** 2413406-黄婉文
+
+本实验需要在完成lab2/lab3的物理内存管理和中断异常处理的基础上进行。根据lab2/lab3的提示词生成相应实验代码，并将结果填写到本实验代码中“lab2”/“lab3”注释的对应位置，确保代码能够正确编译。以下为新增/修改的函数或文件：
+
+```c
+// kern/mm/pmm.c
+static void page_init(void);         
+static void init_pmm_manager(void);   
+
+// kern/mm/best_fit_pmm.c
+static void best_fit_init(void);
+static void best_fit_init_memmap(struct Page *base, size_t n);
+static struct Page *best_fit_alloc_pages(size_t n);
+static void best_fit_free_pages(struct Page *base, size_t n);
+static size_t best_fit_nr_free_pages(void);
+static void basic_check(void);
+static void best_fit_check(void);
+const struct pmm_manager best_fit_pmm_manager;
+
+// kern/mm/best_fit_pmm.h
+extern const struct pmm_manager best_fit_pmm_manager;
+
+// kern/trap/trap.c
+void interrupt_handler(struct trapframe *tf);  
+void exception_handler(struct trapframe *tf); 
+
+// kern/trap/trapentry.S
+RESTORE_ALL   
+__alltraps    
+```
+
 
 ### 功能模块：[模块名称]
 
