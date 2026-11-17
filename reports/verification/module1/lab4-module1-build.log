@@ -1,0 +1,42 @@
+Ubuntu build directory: /home/lvxujing/os-lab/lab4-module1/code
+Git base: e314eca5641bff8fbefe92c78fa615fb544223bc
+riscv64-unknown-elf-gcc (g1b306039ac4) 15.1.0
+Command: make V= obj/kern/mm/pmm.o
++ cc kern/mm/pmm.c
+riscv64-unknown-elf-gcc -Ikern/mm/ -mcmodel=medany -O2 -std=gnu99 -Wno-unused -fno-builtin -Wall -nostdinc  -fno-stack-protector -ffunction-sections -fdata-sections -g -Ilibs/ -Ikern/debug/ -Ikern/driver/ -Ikern/trap/ -Ikern/mm/ -Ikern/sync/ -Ikern/fs/ -Ikern/process -Ikern/schedule -c kern/mm/pmm.c -o obj/kern/mm/pmm.o
+kern/mm/pmm.c: In function 'page_insert':
+kern/mm/pmm.c:323:48: error: 'true' undeclared (first use in this function)
+  323 |             page_mapping_invalidate(pgdir, la, true);
+      |                                                ^~~~
+kern/mm/pmm.c:16:1: note: 'true' is defined in header '<stdbool.h>'; this is probably fixable by adding '#include <stdbool.h>'
+   15 | #include <dtb.h>
+  +++ |+#include <stdbool.h>
+   16 | 
+kern/mm/pmm.c:323:48: note: each undeclared identifier is reported only once for each function it appears in
+  323 |             page_mapping_invalidate(pgdir, la, true);
+      |                                                ^~~~
+kern/mm/pmm.c: In function 'page_remove':
+kern/mm/pmm.c:353:40: error: 'false' undeclared (first use in this function)
+  353 |     page_mapping_invalidate(pgdir, la, false);
+      |                                        ^~~~~
+kern/mm/pmm.c:353:40: note: 'false' is defined in header '<stdbool.h>'; this is probably fixable by adding '#include <stdbool.h>'
+make: *** [Makefile:120：obj/kern/mm/pmm.o] 错误 1
+
+Initial make exit status: 2
+
+Retry after replacing true/false with 1/0
+
+Command: make V= obj/kern/mm/pmm.o
++ cc kern/mm/pmm.c
+riscv64-unknown-elf-gcc -Ikern/mm/ -mcmodel=medany -O2 -std=gnu99 -Wno-unused -fno-builtin -Wall -nostdinc  -fno-stack-protector -ffunction-sections -fdata-sections -g -Ilibs/ -Ikern/debug/ -Ikern/driver/ -Ikern/trap/ -Ikern/mm/ -Ikern/sync/ -Ikern/fs/ -Ikern/process -Ikern/schedule -c kern/mm/pmm.c -o obj/kern/mm/pmm.o
+Retry make exit status: 0
+
+obj/kern/mm/pmm.o：     文件格式 elf64-littleriscv
+体系结构：riscv:rv64， 标志 0x00000011：
+HAS_RELOC, HAS_SYMS
+起始地址 0x0000000000000000
+
+0000000000000000 T page_insert
+0000000000000000 T page_remove
+## lab4...origin/lab4
+ M kern/mm/pmm.c

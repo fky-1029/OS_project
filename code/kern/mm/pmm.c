@@ -285,13 +285,74 @@ struct Page *get_page(pde_t *pgdir, uintptr_t la, pte_t **ptep_store)
     return NULL;
 }
 
-//LAB4 function1 YOUR CODE
+//LAB4 function1 2413671
+static void page_mapping_invalidate(pde_t *pgdir, uintptr_t la,
+                                    bool table_entries_may_have_changed)
+{
+    // Keep PTE stores and page reuse on opposite sides of the fence.
+    asm volatile("" ::: "memory");
+    if (table_entries_may_have_changed)
+    {
+        flush_tlb();
+    }
+    else
+    {
+        tlb_invalidate(pgdir, la);
+    }
+    asm volatile("" ::: "memory");
+}
 
+static void page_mapping_put(struct Page *page)
+{
+    if (page_ref_dec(page) == 0)
+    {
+        free_page(page);
+    }
+}
 
+int page_insert(pde_t *pgdir, struct Page *page, uintptr_t la, uint32_t perm)
+{
+    pte_t *ptep = get_pte(pgdir, la, 0);
+    bool create_tables = ptep == NULL;
+    if (create_tables)
+    {
+        ptep = get_pte(pgdir, la, 1);
+        if (ptep == NULL)
+        {
+            // get_pte() may have published a parent entry before failing.
+            page_mapping_invalidate(pgdir, la, 1);
+            return -E_NO_MEM;
+        }
+    }
 
+    struct Page *old_page = (*ptep & PTE_V) ? pte2page(*ptep) : NULL;
+    if (old_page != page)
+    {
+        page_ref_inc(page);
+    }
+    *ptep = pte_create(page2ppn(page), perm);
+    page_mapping_invalidate(pgdir, la, create_tables);
 
+    if (old_page != NULL && old_page != page)
+    {
+        page_mapping_put(old_page);
+    }
+    return 0;
+}
 
+void page_remove(pde_t *pgdir, uintptr_t la)
+{
+    pte_t *ptep = get_pte(pgdir, la, 0);
+    if (ptep == NULL || !(*ptep & PTE_V))
+    {
+        return;
+    }
 
+    struct Page *page = pte2page(*ptep);
+    *ptep = 0;
+    page_mapping_invalidate(pgdir, la, 0);
+    page_mapping_put(page);
+}
 
 // invalidate a TLB entry, but only if the page tables being
 // edited are the ones currently in use by the processor.
