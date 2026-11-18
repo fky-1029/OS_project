@@ -278,11 +278,13 @@ static int copy_mm(uint32_t clone_flags, struct proc_struct *proc);
 
 当前实验阶段不进行真正的用户地址空间复制，proc->mm 保持 NULL，函数返回 0。只为后续实验保留完整函数形态，便于扩展为用户地址空间复制。不得因为 current->mm == NULL 而崩溃或返回错误，应安全地作为占位接口返回成功；不得在 copy_mm() 中分配或复制用户页表。
 
+```
+
 ## 2413396-范珂祎 · 功能模块三
 
 以下为本模块最终采用的提示词原文。
 
-~~~text
+```text
 [PROMPT：任务与操作要求]
 
 请基于 uCore/RISC-V 实验框架，实现"进程调度"功能模块中的四个函数，使其能把已创建的内核线程真正交给 CPU 执行，并完成上下文切换。需要实现的函数如下：
@@ -320,4 +322,4 @@ static int copy_mm(uint32_t clone_flags, struct proc_struct *proc);
 - void schedule(void)：无返回值；负责一次合法调度选择并触发 proc_run，临界区自洽。
 - void proc_run(struct proc_struct *proc)：无返回值；使 proc 成为 current 并完成页表与上下文切换；对 proc == current 做短路返回。
 - void switch_to(struct context *from, struct context *to)：汇编实现；严格按 struct context 布局保存/恢复 ra、sp、s0~s11，遵循 RISC-V 调用约定。
-~~~
+```

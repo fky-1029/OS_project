@@ -491,7 +491,7 @@ CFLAGS  += -Wno-error=incompatible-pointer-types
 
 **实现位置与接口**
 
-实现在 `code/kern/process/proc.c`、`code/kern/schedule/sched.c` 与 `code/kern/process/switch.S` 的 `LAB4 function3` 标记区，声明沿用 `proc.h`、`sched.h`。 [进程实现](../code/kern/process/proc.c) · [调度实现](../code/kern/schedule/sched.c) · [上下文切换](../code/kern/process/switch.S) · [进程接口](../code/kern/process/proc.h)
+实现在 `code/kern/process/proc.c`、`code/kern/schedule/sched.c` 与 `code/kern/process/switch.S` 的 `LAB4 function3` 标记区，声明沿用 `proc.h`、`sched.h`。 
 
 ```c
 void cpu_idle(void);                                       // kern/process/proc.c
@@ -508,18 +508,56 @@ void switch_to(struct context *from, struct context *to);  // kern/process/switc
 - **首次运行链路。** 新线程的 context.ra 已由 copy_thread 预置为 forkret，switch_to 恢复现场后跳入 forkret，沿 forkret -> forkrets -> __trapret 伪造一次"从中断返回"。
 - **上下文布局。** switch_to 逐字段核对 struct context 的字段顺序（ra、sp、s0~s11）与偏移，只保存/恢复 callee-saved 寄存器，遵守 RISC-V 调用约定，不读写全局变量、不调用函数。
 
+
 #### 最终提示词
 
-实现轮的 `PROMPT` 限定四个函数的改动位置与交付范围，`RELY` 列出 struct context/current/proc_list/local_intr_save/restore/SATP_MODE_SV39/flush_tlb 等可依赖接口，`SPECIFICATION` 逐项规定 cpu_idle 不返回、schedule 的临界区与 idleproc 回退、proc_run 的 satp 切换与 TLB 刷新、switch_to 的寄存器搬运边界。 [完整提示词记录](prompt.md)
+以下为本模块最终采用的提示词原文。
+
+```text
+[PROMPT：任务与操作要求]
+
+请基于 uCore/RISC-V 实验框架，实现"进程调度"功能模块中的四个函数，使其能把已创建的内核线程真正交给 CPU 执行，并完成上下文切换。需要实现的函数如下：
+1. void cpu_idle(void);（kern/process/proc.c）
+2. void schedule(void);（kern/schedule/sched.c）
+3. void proc_run(struct proc_struct *proc);（kern/process/proc.c）
+4. void switch_to(struct context *from, struct context *to);（kern/process/switch.S，汇编实现）
+
+整体功能要求：cpu_idle 作为空闲线程（idleproc）的执行主体，持续检测 need_resched 并在需要时调用 schedule；schedule 从 proc_list 中挑选下一个处于 PROC_RUNNABLE 状态的线程，若没有可运行线程则退回 idleproc，并在临界区内完成选择后调用 proc_run；proc_run 在关中断的临界区内更新 current、切换 satp 页表寄存器、刷新 TLB，并调用 switch_to 完成执行现场切换；switch_to 只负责按 struct context 布局保存旧线程的 ra/sp/s0~s11 并恢复新线程的对应寄存器，不做任何调度策略判断。切换完成后，新线程第一次运行应能经由上一模块预先布置的 context.ra = forkret，沿 forkret -> forkrets -> __trapret 链路回到正确入口。
+
+[RELY：已有条件]
+
+本模块可直接依赖以下已有接口、结构体、全局变量与符号，无需重新实现：
+- 结构体与全局：struct proc_struct、struct context（字段含 ra/sp/s0~s11）、PROC_RUNNABLE/PROC_UNINIT 等状态宏、current、idleproc、initproc、proc_list、need_resched、nr_process；以上均在 kern/process/proc.h 中声明。
+- 中断控制：local_intr_save(intr_flag) / local_intr_restore(intr_flag)（kern/sync/sync.h），用于构造关中断临界区。
+- CSR 与页表：read_csr()/write_csr()、SATP_MODE_SV39、RISCV_PGSHIFT、SSTATUS_SIE（libs/riscv.h）；注意 lsatp() 为 Sv32 遗留不可用，需仿照 kern/mm/pmm.c 中 enable_paging() 的写法构造 Sv39 的 satp 值。
+- TLB：flush_tlb()（kern/mm/pmm.h）。
+- 调度相关声明：schedule()/wakeup_proc() 声明于 kern/schedule/sched.h；列表操作 list_next()、le2proc() 等来自链表与进程管理宏。
+- 首次运行恢复链路符号：forkret、forkrets、__trapret。
+- 汇编侧：switch_to 需遵守 RISC-V 调用约定，struct context 布局由 proc.h 给出，偏移量须与 C 结构体逐字段一致。
+
+[GUARANTEE：交付内容]
+
+1. cpu_idle 必须是一个不返回的死循环：每轮检查 need_resched，为真则调用 schedule()；不得在其中直接操作 current 或执行切换。
+2. schedule 的选择逻辑必须正确：遍历 proc_list 找到第一个 PROC_RUNNABLE 线程；若无则选 idleproc；选择与 proc_run 调用必须在 local_intr_save/restore 保护的临界区内完成。
+3. proc_run 必须先判断目标是否已是 current（相同则直接返回）；切换时依次完成：更新 current、写 satp 切换页表、flush_tlb()、调用 switch_to(&prev->context, &next->context)；整个过程处于关中断状态。
+4. switch_to 只做寄存器搬运：按 struct context 字段顺序（ra, sp, s0~s11）保存 from 到结构体、从 to 恢复；不得读写任何全局变量、不得调用函数、不得改变调度语义。
+5. 不允许引入未在 RELY 中列出的新依赖；不得修改 struct context 的字段顺序或语义。
+6. 代码需能在现有实验框架下正确编译，且 initproc 能从 idleproc 手中接管 CPU 并正常运行。
+
+[SPECIFICATION：行为与验收]
+
+接口与行为约定：
+- void cpu_idle(void)：永不返回；循环体为"若 need_resched 则 schedule()"。
+- void schedule(void)：无返回值；负责一次合法调度选择并触发 proc_run，临界区自洽。
+- void proc_run(struct proc_struct *proc)：无返回值；使 proc 成为 current 并完成页表与上下文切换；对 proc == current 做短路返回。
+- void switch_to(struct context *from, struct context *to)：汇编实现；严格按 struct context 布局保存/恢复 ra、sp、s0~s11，遵循 RISC-V 调用约定。
+```
 
 #### 实现迭代过程
 
-1. **定位与生成。** 先只读拉取远端 lab4 分支，确认模块一已完成、模块二尚未动工，模块三共四处标记（proc.c 的 cpu_idle/proc_run、sched.c 的 schedule、switch.S 的 switch_to）。按 proc.h 的 struct context 布局与 pmm.c 的 enable_paging() satp 写法逐字段核对接口后，一次性生成四个函数。
-2. **单独编译。** 用 Makefile 自身规则单独编译 obj/kern/process/proc.o、switch.o、sched.o 三个目标，0 错误 0 警告，代码本身一次通过，无需在代码层面来回迭代。
-3. **全量构建与框架问题区分。** 全量 make 停在框架 `kmalloc.c:92` 的 `kva2page()` 整数转指针（GCC 15），与模块三无关；加 `(void *)` 修复后全量编译通过，链接期仅剩模块二的 `proc_init` 未定义。据此确认模块三已正确链入内核，运行验证待模块二完成后进行。
+用 Makefile 自身规则单独编译 obj/kern/process/proc.o、switch.o、sched.o 三个目标代码本身一次通过，无需迭代。
 
 ---
-
 
 
 ### 扩展练习 Challenge
@@ -555,14 +593,14 @@ local_intr_save(intr_flag) 先读取当前 sstatus 的 SIE 位，把中断原本
 - 测试通过的结果（make grade），只有一个
 -->
 
+首先运行make qemu，编译成功并输出启动信息，通过分页检查、vma检查等，切换initproc内核线程并输出后成功退出。
 
-### 功能模块三验证（2413396-范珂祎）
+![make qemu截图](./images/qemu.png)
 
-用 Makefile 自身规则单独编译 `obj/kern/process/proc.o`、`obj/kern/process/switch.o`、`obj/kern/schedule/sched.o` 三个目标，0 错误 0 警告；全量 `make` 下所有 C/S 文件编译通过，模块三四个函数已正确链入内核，链接期唯一报错为模块二未实现的 `proc_init`。运行验证（`make qemu` / `make grade`）需待模块二完成后进行，截图后补。
+然后运行make grade，成功通过 PMM、Process Create 以及 Schedule 验证，最终得分30/30。
 
-> 待模块二合入后补图：① `make qemu` 启动日志（idleproc/initproc 建立，initproc 经 forkret -> forkrets -> __trapret 首次运行）；② `make grade` 调度相关用例通过截图。
+![make grade截图](./images/grade.png)
 
----
 
 ## 六、实验总结与收获
 
