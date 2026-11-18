@@ -489,74 +489,34 @@ CFLAGS  += -Wno-error=incompatible-pointer-types
 
 #### 模块功能描述
 
-**需要实现/修改的函数：**
+**实现位置与接口**
+
+实现在 `code/kern/process/proc.c`、`code/kern/schedule/sched.c` 与 `code/kern/process/switch.S` 的 `LAB4 function3` 标记区，声明沿用 `proc.h`、`sched.h`。 [进程实现](../code/kern/process/proc.c) · [调度实现](../code/kern/schedule/sched.c) · [上下文切换](../code/kern/process/switch.S) · [进程接口](../code/kern/process/proc.h)
 
 ```c
-// 列出本模块涉及的所有函数签名
-void example_function(void);
-int another_function(int arg);
+void cpu_idle(void);                                       // kern/process/proc.c
+void schedule(void);                                       // kern/schedule/sched.c
+void proc_run(struct proc_struct *proc);                   // kern/process/proc.c
+void switch_to(struct context *from, struct context *to);  // kern/process/switch.S
 ```
 
-**功能说明：**
+`cpu_idle()` 是 idleproc 的执行主体，持续检测 `need_resched` 并在需要时触发调度；`schedule()` 从 `proc_list` 选出第一个 `PROC_RUNNABLE` 线程，无可用线程时退回 `idleproc`；`proc_run()` 在关中断临界区内更新 `current`、切换 satp 页表并刷新 TLB，再调用 `switch_to()` 完成现场切换；`switch_to()` 只按 `struct context` 布局搬运 `ra/sp/s0~s11`，不做任何调度决策。新线程首次被切上 CPU 时经 `forkret -> forkrets -> __trapret` 链路回到正确入口。
 
-[简要描述该模块的功能，包括：
-- 该模块在整个系统中的作用
-- 需要处理的主要场景
-- 与其他模块的交互关系]
+- **职责分层。** cpu_idle 只发现"该调度了"，把选择与切换交给 schedule/proc_run；schedule 只决策"选谁"；proc_run 只执行"换页表 + 换现场"；switch_to 只做"搬寄存器"。四者互不越界。
+- **切换原子性。** schedule 的"选择 + proc_run"与 proc_run 的"current/页表/现场"更新都包在 local_intr_save/restore 临界区内，避免选出 next 之后被中断打断，造成 current、页表与实际执行现场三者不一致。
+- **页表切换。** satp 按 Sv39 构造 `SATP_MODE_SV39 | (pgdir >> RISCV_PGSHIFT)`，参照 pmm.c 的 enable_paging() 写法，未使用 Sv32 遗留的 lsatp()；写完 satp 立即 flush_tlb() 使旧翻译失效。
+- **首次运行链路。** 新线程的 context.ra 已由 copy_thread 预置为 forkret，switch_to 恢复现场后跳入 forkret，沿 forkret -> forkrets -> __trapret 伪造一次"从中断返回"。
+- **上下文布局。** switch_to 逐字段核对 struct context 的字段顺序（ra、sp、s0~s11）与偏移，只保存/恢复 callee-saved 寄存器，遵守 RISC-V 调用约定，不读写全局变量、不调用函数。
 
 #### 最终提示词
 
-以下是经过迭代优化后，最终成功实现该功能的提示词：
-
-````markdown
-
-[按照提示词模板，给出具体的提示词]
-
-````
+实现轮的 `PROMPT` 限定四个函数的改动位置与交付范围，`RELY` 列出 struct context/current/proc_list/local_intr_save/restore/SATP_MODE_SV39/flush_tlb 等可依赖接口，`SPECIFICATION` 逐项规定 cpu_idle 不返回、schedule 的临界区与 idleproc 回退、proc_run 的 satp 切换与 TLB 刷新、switch_to 的寄存器搬运边界。 [完整提示词记录](prompt.md)
 
 #### 实现迭代过程
 
-本模块的实现经历了 [N] 次迭代，过程如下：
-
----
-
-##### 第一次迭代
-
-如果设计的prompt生成代码后出现问题：
-
-**遇到的问题：**
-- 问题1：问题描述、错误信息和原因分析
-- 问题2：问题描述、错误信息和原因分析
-
-**问题解决策略：**
-- 针对问题1：[说明如何修改提示词]
-- 针对问题2：[说明如何修改提示词]
-
-如果没有问题：
-
-**最终结果：**
-
-经过 [N] 次迭代，该模块最终：
-- ✅ 编译通过
-- ✅ 所有相关测试通过
-- ✅ 功能符合预期
-
-**关键改进点总结（如有）：**
-1. [改进点1：例如，在 [RELY] 中补充了完整的系统调用号定义]
-2. [改进点2：例如，在 [SPECIFICATION] 中明确了异常处理的边界条件]
-3. [改进点3：例如，增加了对用户指针合法性检查的要求]
-
----
-
-##### 第二次迭代（如有）
-
-[按照和第一次迭代相同的格式]
-
----
-
-##### 第三次迭代（如有）
-
-[按照和第一次迭代相同的格式]
+1. **定位与生成。** 先只读拉取远端 lab4 分支，确认模块一已完成、模块二尚未动工，模块三共四处标记（proc.c 的 cpu_idle/proc_run、sched.c 的 schedule、switch.S 的 switch_to）。按 proc.h 的 struct context 布局与 pmm.c 的 enable_paging() satp 写法逐字段核对接口后，一次性生成四个函数。
+2. **单独编译。** 用 Makefile 自身规则单独编译 obj/kern/process/proc.o、switch.o、sched.o 三个目标，0 错误 0 警告，代码本身一次通过，无需在代码层面来回迭代。
+3. **全量构建与框架问题区分。** 全量 make 停在框架 `kmalloc.c:92` 的 `kva2page()` 整数转指针（GCC 15），与模块三无关；加 `(void *)` 修复后全量编译通过，链接期仅剩模块二的 `proc_init` 未定义。据此确认模块三已正确链入内核，运行验证待模块二完成后进行。
 
 ---
 
@@ -596,6 +556,12 @@ local_intr_save(intr_flag) 先读取当前 sstatus 的 SIE 位，把中断原本
 -->
 
 
+### 功能模块三验证（2413396-范珂祎）
+
+用 Makefile 自身规则单独编译 `obj/kern/process/proc.o`、`obj/kern/process/switch.o`、`obj/kern/schedule/sched.o` 三个目标，0 错误 0 警告；全量 `make` 下所有 C/S 文件编译通过，模块三四个函数已正确链入内核，链接期唯一报错为模块二未实现的 `proc_init`。运行验证（`make qemu` / `make grade`）需待模块二完成后进行，截图后补。
+
+> 待模块二合入后补图：① `make qemu` 启动日志（idleproc/initproc 建立，initproc 经 forkret -> forkrets -> __trapret 首次运行）；② `make grade` 调度相关用例通过截图。
+
 ---
 
 ## 六、实验总结与收获
@@ -609,6 +575,10 @@ local_intr_save(intr_flag) 先读取当前 sstatus 的 SIE 位，把中断原本
 
 Sv39 的页表记录映射，引用计数记录数据页还有多少个映射，TLB 缓存已经完成的地址翻译。换页时通过同一 VA 读到新值，说明此次运行中硬件使用了新翻译。旧页仍可经别名访问，直到最后一个别名撤销才归还分配器。这里练习的是预先建立和撤销映射，按需分页和页面置换属于后续实验内容。
 
+**模块三心得（2413396-范珂祎）**
+
+这个模块让我第一次体会到"调度"不是单个函数，而是一条有严格先后与原子性要求的链：cpu_idle 只负责发现"该调度了"，schedule 只负责"选谁"，proc_run 负责"换页表、换现场"，switch_to 负责"搬寄存器"，四者职责边界必须清晰。最容易踩的坑是临界区——若选完 next 却在关中断之外切换，中断一来就可能出现 current 已变而页表/现场未变的中间态，系统会以极隐蔽的方式崩掉。另一个收获是理解了新线程"第一次运行"并非从函数第一行开始，而是依赖 copy_thread 预先布置的 context.ra = forkret，经 forkret -> forkrets -> __trapret 这条恢复链路"伪造"出一次从中断返回，switch_to 只是把这条链的起点接上。写 switch.S 时对 struct context 布局和 RISC-V 调用约定的逐字段核对，也让"上下文"从抽象名词变成了具体的寄存器快照。
+
 ### AI 协作开发的经验
 
 [写出你们在与 AI 协作过程中实际收获的经验或者感悟]
@@ -616,6 +586,10 @@ Sv39 的页表记录映射，引用计数记录数据页还有多少个映射，
 **模块一心得（2413671-吕旭婧）**
 
 本次用 Codex Desktop 协助检查框架、生成并修改模块一实现、编写独立测试和整理结果。先用只读提示词确认本仓库的接口和断言，再在实现提示词里明确引用计数、OOM 副作用与 fence 的范围。单独编译暴露了 AI 代码使用未定义布尔字面量的问题，独立启动则区分了框架的工具链兼容问题和页表操作本身的行为。分配回调注入使第二次失败留下空表的行为可以实测，实际换页读取也补上了只查 PTE 和计数无法覆盖的验证。 [完整提示词记录](prompt.md)
+
+**模块三心得（2413396-范珂祎）**
+
+本次用 Claude Code 协助核对队友进度、定位模块三的四处分包标记、生成 cpu_idle/schedule/proc_run/switch_to 四个函数并完成编译验证。先只读拉取远端 lab4 分支确认模块一已完成、模块二尚未动工，再按 proc.h 的 struct context 布局和 pmm.c 的 enable_paging() 的 satp 写法逐字段核对接口后一次性生成。用 Makefile 自身规则单独编译三个目标文件验证代码本身无错，全量 make 则把框架 kmalloc.c 的整数转指针问题（GCC 15）与模块三代码区分开，确认模块三已正确链入内核、剩余唯一阻塞是模块二的 proc_init 未实现。 [完整提示词记录](prompt.md)
 
 ---
 
