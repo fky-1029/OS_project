@@ -304,6 +304,7 @@ static void page_mapping_invalidate(pde_t *pgdir, uintptr_t la,
 
 static void page_mapping_put(struct Page *page)
 {
+    // 引用计数减一，如果引用计数为0，则释放该页
     if (page_ref_dec(page) == 0)
     {
         free_page(page);

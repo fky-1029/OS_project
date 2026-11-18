@@ -130,7 +130,7 @@ __alltraps
 
 **实现位置与接口**
 
-实现在 `code/kern/mm/pmm.c` 的 `LAB4 function1 2413671` 标记区，声明沿用 `pmm.h`。 [实现源码](../code/kern/mm/pmm.c) · [接口声明](../code/kern/mm/pmm.h)
+实现在 `code/kern/mm/pmm.c` 的 LAB4 function1。
 
 ```c
 int page_insert(pde_t *pgdir, struct Page *page, uintptr_t la, uint32_t perm);
@@ -139,22 +139,82 @@ void page_remove(pde_t *pgdir, uintptr_t la);
 
 `page_insert()` 负责在 Sv39 页表中建立或更新 4 KiB 映射，`page_remove()` 撤销映射。两个接口一起维护末级 PTE、数据页引用计数与当前 hart 的地址翻译缓存。启动阶段的 `pmm_init()` 先运行页表自检，之后才进入虚拟内存与进程管理初始化。
 
-- **新建与同页改权。** `page_insert()` 先用 `get_pte(pgdir, la, 0)` 查找槽位，缺表时才允许创建。写入的 PTE 由 `pte_create(page2ppn(page), perm)` 构造，包含物理页号、有效位和调用者原样传入的权限。新增映射使目标页引用加一。同页改权时，原映射与新映射占的是同一个槽位，指向同一页，引入和移除的引用相互抵消，所以直接改写 PTE，引用计数从头到尾保持不变。
-- **换页与删除。** 换页先增加新页的引用并发布新 PTE。删除使用 `create=0` 查找，缺表或 PTE 无效时直接返回，有效时将 PTE 清零。两条路径均在更新 PTE 后失效旧翻译，再减少旧页引用，归零才回收。若先回收，当前 hart 可能仍用缓存的旧翻译访问已交给其他用途的页。普通删除保留中间页表。
-- **TLB 失效范围。** 只更新末级 PTE 时，由 `tlb_invalidate()` 执行针对目标虚拟地址的 `sfence.vma`。走过可能新增非叶项的路径时，调用 `flush_tlb()` 执行本 hart 的全地址 fence。封装函数在 fence 前后放置编译器内存屏障，约束 PTE 写入和物理页回收的顺序。
-- **分配失败。** 第一次表页分配失败时，根目录尚未挂接新表。第一次成功、第二次失败时，`get_pte()` 已挂接第一张空表，空闲页数暂少一张，重试可以复用。两种情况都返回 `-E_NO_MEM`，均未建立有效末级映射或修改目标数据页引用。失败路径仍执行全地址 fence，以覆盖已经发布非叶项的情况。
+- **新建与同页映射。** `page_insert()` 先用 `get_pte(pgdir, la, 0)` 查找槽位，缺表时才允许创建；写入的 PTE 由 `pte_create(page2ppn(page), perm)` 构造，包含物理页号、有效位和调用者原样传入的权限；新增映射使目标页引用加一。如果原地址已经映射到同一物理页，则引用计数保持不变，但可能要更新 PTE 的权限位。
+- **换页与删除。** 更改映射需要增加新页的引用并发布新 PTE，如果原地址已经映射到其他物理页还需删除原映射。先用 get_pte 查找该 PTE，缺项或无效时直接返回，有效时将 PTE 清零，旧页引用计数减1，如果旧页引用归零就回收页；然后更新PTE，增加新页引用计数；普通删除保留中间页表。
+- **TLB 失效。** 只更新末级 PTE 时，由 `tlb_invalidate()` 执行针对目标虚拟地址的 `sfence.vma`；走可能新增中间级页表页时，用 flush_tlb() 执行本 hart 的全地址 fence；封装函数在 fence 前后放置编译器内存屏障，保证 PTE 写入先于 TLB 失效、物理页回收后于 TLB 失效。
+- **分配失败。** get_pte 补建中间页表页失败时返回 -E_NO_MEM；已挂接的部分中间页表页可复用；不修改目标数据页引用计数。
 
 #### 最终提示词
 
-实现轮的 `PROMPT` 限定改动位置和交付范围，`RELY` 指定复用仓库现有接口与上级表分配语义，`SPECIFICATION` 逐项规定新建、同页改权、换页、删除、失败返回及 TLB 失效。运行验证轮补充实际访存、别名和分配失败重试等验收场景。 [实现轮原文](prompt.md#module1-implementation) · [运行验证轮原文](prompt.md#module1-validation)
+本模块提示词包括两部分，首先进行只读检查，然后实现模块功能：PROMPT 限定改动位置和交付范围，RELY 指定复用仓库现有接口与上级表分配语义，SPECIFICATION 逐项规定新建、同页改权、换页、删除、失败返回及 TLB 失效。最后单独编译运行验证，补充实际访存、别名和分配失败重试等验收场景。 
+
+1. 只读检查
+
+[PROMPT：任务与范围]\
+\
+我负责 uCore Lab4 模块一：虚拟内存页操作。请先只读检查小组仓库的 lab4 分支，明确实现范围和验证办法。\
+\
+仓库：https\://github.com/fky-1029/OS_project.git\
+指导书：D:\lvxujing\Download\CodexHomework\操作系统\lab4 进程管理.txt\
+\
+先核对远端实际提交号。讨论窗口看到的版本是 e314eca，请以本轮查询为准。建议一个独立的 Lab4 开发目录，不切换 Lab1–Lab3 现有工作区。本轮不修改源码、报告或配置，不提交、不推送。\
+\
+[RELY：以实际工程为准]\
+\
+检查 code/kern/mm/pmm.c、pmm.h 和相关页表定义。重点看 page_insert()、page_remove() 的标记及声明，以及 get_pte()、pte_create()、页引用计数、free_page()、tlb_invalidate() 的现有行为。若工程还有其他 Lab 留下的待补项，单独列出来，不混进模块一。\
+\
+[GUARANTEE：本轮交付]\
+\
+说明模块一还缺什么、建议改哪里、哪些依赖已经具备；给出单独验证模块一和全组集成验证的可行路线。区分已核实的事实、需要运行才能确认的结果和待组内决定的问题。\
+\
+[SPECIFICATION：检查重点]\
+\
+1\. 逐项说明新建映射、给同一物理页更新权限、替换成另一物理页、删除有效映射及重复删除时，PTE、引用计数和 TLB 应分别是什么状态。\
+2\. 查看 get_pte(..., 1) 分配失败时有哪些副作用，区分末级映射与中间页表。如果需要改公共接口才能满足更严格的回滚要求，先报告，不直接扩大修改范围。\
+3\. 核对 check_pgdir()、check_boot_pgdir() 的调用位置和实际断言，说明它们覆盖了什么、没有覆盖什么。其他模块没齐时，说明如何在独立副本验证我的代码，不改组员代码或已有断言。\
+4\. 检查已有 Ubuntu 工具链和 QEMU 是否可用，核对当前 Makefile 的启动和测试入口。不安装软件，不改环境，不执行带批量清理的 clean 或 grade。
+
+2. 实现与单独编译
+
+[PROMPT：任务与范围]\
+\
+根据上一轮检查，实现 Lab4 模块一的 page_insert() 和 page_remove()。\
+\
+请从小组仓库的 lab4 分支建立独立开发目录：\
+D:\lvxujing\Download\CodexHomework\操作系统\lab4\OS_project-lab4-module1\
+\
+仓库：https\://github.com/fky-1029/OS_project.git\
+上一轮核对的基线是 e314eca。先确认远端是否有新提交；保留组员的改动。如果模块一已经有人实现，先说明现状，不覆盖。不要切换 Lab1–Lab3 的目录。\
+\
+只在 code/kern/mm/pmm.c 的 LAB4 function1 标记区实现两个接口。保留标记，把本处 YOUR CODE 改成我的学号 2413671。需要共用的内部小函数可以放在同一实现区。不改公共 helper、现有测试、其他模块和报告，不提交或推送。\
+\
+[RELY：已有接口]\
+\
+以实际工程的 get_pte()、pte_create()、page2ppn()、pte2page()、引用计数接口、free_page()、tlb_invalidate() 和 flush_tlb() 为准。保留现有接口签名和调用者传入的权限语义，不擅自补权限或改测试条件。\
+\
+get_pte() 在允许创建时可能分配中间页表。它在第二级分配失败时可能保留第一级已挂接的空表，这是现有框架行为。本轮不修改 get_pte() 或承诺完整回滚中间结构；若发现指导书或新版本明确要求完整回滚，先说明差异。\
+\
+[GUARANTEE：本轮交付]\
+\
+给出模块一代码差异、实际编译命令和结果，并解释同页改权、换页、撤销映射和分配失败时，PTE、引用计数和 TLB 分别如何处理。说明是否有未通过或未运行的检查。\
+\
+[SPECIFICATION：行为与验收]\
+\
+1\. 新建映射成功后，末级 PTE 指向目标物理页，包含有效位和调用者要求的权限，目标页引用计数加一。\
+2\. 已经映射到同一物理页时，更新权限但不改变引用计数，不让该页经过回收。换成另一页时，新增新页引用、移除旧页引用；旧页仍被其他地址引用就保留，归零才回收。\
+3\. 找不到末级槽位时返回 -E_NO_MEM，不写入末级映射，不改变目标数据页引用计数。说明在分配中间表失败的情况下，框架可能留下什么。\
+4\. 删除时只查找，不创建页表。缺表或 PTE 无效时直接返回。删除有效映射后清除 PTE、减少原页引用，归零才回收；普通删除不回收中间页表页。\
+5\. 页表更新后处理 TLB 失效，保证旧映射被回收前不再被本 hart 继续使用。区分只修改末级 PTE 与新增非叶表项；新增非叶表项时使用全地址 fence。说明所选的失效策略，不只满足软件断言。\
+6\. 在 Ubuntu 的独立 Lab4 目录沿用已有工具链，按 Makefile 的实际参数单独编译 pmm.c 对应的目标文件。保存实际命令和日志。若遇到框架或其他模块的编译问题，只记录，不修改组员代码来绕过。禁止批量删除，不运行带批量清理的 clean 或 grade。\
+\
+本轮以代码实现和单独编译为验收。
+
 
 #### 实现迭代过程
 
-1. **单独编译。** AI 生成的初版使用了工程未定义的 `true` 和 `false`。`make V= obj/kern/mm/pmm.o` 首次退出码为 `2`。改用项目已有的 `1` 和 `0` 后，同一目标重编退出码为 `0`。反汇编检查了单地址和全地址两种 `sfence.vma`，并核对了换页和删除路径中 PTE 写入、fence、减引用及回收的指令顺序。 [单独编译原始日志](verification/module1/lab4-module1-build.log)
-2. **运行验证。** 独立测试副本的普通构建停在框架 `kmalloc.c:92`。GCC 15 将传给 `kva2page()` 的整数到指针转换诊断为错误。仅在测试构建命令中用 `DEFS=-Wno-error=int-conversion` 将该诊断降为警告，框架源码与断言保持原样。该报错发生在模块一代码之外。随后构建成功，依次执行原有自检和额外测试。 [首次失败日志](verification/module1/01-original-build.log#L37) · [重建日志](verification/module1/02-original-build.log#L37)
+AI 生成的初版使用了工程未定义的 true 和 false，首次编译退出码为 2；改用项目已有的 1 和 0 后，编译退出码为 0。
 
 ---
-
 
 
 ### 功能模块二：进程创建及初始化功能
@@ -166,17 +226,25 @@ void page_remove(pde_t *pgdir, uintptr_t la);
 **需要实现/修改的函数：**
 
 ```c
-// 列出本模块涉及的所有函数签名
-void example_function(void);
-int another_function(int arg);
+static struct proc_struct *alloc_proc(void);
+void proc_init(void);
+int kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags);
+int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf);
+static void copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapframe *tf);
+static int copy_mm(uint32_t clone_flags, struct proc_struct *proc);
 ```
 
 **功能说明：**
 
-[简要描述该模块的功能，包括：
-- 该模块在整个系统中的作用
-- 需要处理的主要场景
-- 与其他模块的交互关系]
+本模块位于 kern/process/proc.c，负责把内核从“只能运行单一执行流”推进到“能够创建、登记并启动多个内核线程”。模块完成后，系统中至少存在 idleproc 和 initproc 两个内核线程，current、proc_list、hash_list、nr_process 等全局结构进入可用状态，initproc 在后续调度中能够被真正切换执行。
+
+1. PCB 安全初始化：alloc_proc() 分配 PCB 后必须把所有字段置于安全空白状态（state = PROC_UNINIT、pid = -1、mm = NULL、tf = NULL、context 清零等），避免后续 do_fork() 或调度代码误用未初始化字段。
+2. 创建 idleproc：特殊的空闲线程 idleproc 通过直接复用当前执行现场包装而成，PID 为 0，内核栈复用启动栈，need_resched = 1，并成为初始 current 进程块。
+3. 创建 initproc：通过 kernel_thread(init_main, NULL, 0) 走 kernel_thread → do_fork 路径创建，PID 为 1，状态为 PROC_RUNNABLE，并登记到 proc_list 和 hash_list。
+4. 首次运行现场的构造：kernel_thread() 构造临时 trapframe（sepc = kernel_thread_entry、设置 sstatus、fn 放 s0、arg 放 s1），copy_thread() 把它复制到新线程内核栈，并设置 context.ra = forkret、context.sp 指向 tf，保证 forkret → forkrets → __trapret → sret 启动链正确。
+5. fork创建子进程：do_fork() 按顺序组合 PCB、内核栈、地址空间、trapframe/context、PID、链表节点和状态位；任何一步失败都要回滚已占用资源，避免 PCB 泄漏、内核栈泄漏或半挂接节点。
+6. 地址空间占位处理：当前创建的是内核线程，current->mm 为 NULL，copy_mm() 作为占位接口直接返回成功，不复制用户地址空间，但保留完整函数形态，便于 lab5 扩展为用户进程地址空间复制。
+
 
 #### 最终提示词
 
@@ -184,57 +252,235 @@ int another_function(int arg);
 
 ````markdown
 
-[按照提示词模板，给出具体的提示词]
+[PROMPT]
+**任务**：修改文件 kern/process/proc.c，实现或修改进程创建及初始化模块，包括以下函数：alloc_proc()、proc_init()、kernel_thread()、do_fork()、copy_thread()、copy_mm()。
+
+该模块负责使系统内核能够创建并登记多个内核线程。具体分工如下：
+- alloc_proc 负责得到一个干净的进程控制块；
+- proc_init 负责把当前执行现场包装成 idleproc，并创建第一个真正的内核线程 initproc；
+- kernel_thread 负责把函数入口和参数整理成线程首次运行所需的临时上下文；
+- do_fork 负责把线程信息、内核栈、PID、链表、状态位等资源真正组合成一个可运行实体；
+- copy_thread 负责把 trapframe 和 context 安放到新线程自己的内核栈上；
+- copy_mm 在当前实验阶段承担地址空间处理接口的占位作用。
+
+这个模块完成后，系统里至少要存在 idleproc 和 initproc 两个关键内核线程，current、proc_list、hash_list、nr_process 等全局结构处于可用状态，并且 initproc 需要能够在后续调度中被真正切换执行。
+
+**操作要求**：你必须在项目中修改实际文件，而不是仅展示代码。保留文件中的现有代码，只在需要实现或补全的位置修改；不要删除既有逻辑，不要引入与当前实验无关的功能。需要完整实现函数主体、必要的静态辅助函数、模块内部静态变量等。
+
+**输出要求**：直接进行文件操作。使用下面 [RELY]、[GUARANTEE]、[SPECIFICATION] 中的信息；以工程真实代码为准，不要凭记忆臆造宏名、结构体字段或函数签名。实现应能通过编译，并满足本实验对内核线程创建与初始化的行为要求。
+
+**注意事项**：
+- 必须保证 PCB 状态、内核栈、PID、链表节点、哈希表节点和唤醒顺序一致。
+- alloc_proc 必须把 PCB 置于安全空白状态，避免后续代码误用未初始化字段。
+- proc_init 中的 idleproc 并不是普通 fork 出来的线程，而是直接复用当前执行现场，所以它的 PID、内核栈、调度标记和 current 位置都带有特殊含义。
+- kernel_thread 与 copy_thread 必须配合 forkret、forkrets、__trapret 形成正确的首次运行链路。
+- do_fork 必须正确处理失败清理、PID 分配、链表挂接和唤醒顺序，否则会出现资源泄漏、僵尸结构或线程状态错误。
+- 当前阶段的 copy_mm 不做真正的用户地址空间复制，但仍需要维持函数形态完整，方便后续实验继续扩展。
+
+**模块对外接口要求**：
+- alloc_proc 应返回一个已完成基础字段初始化的 PCB。
+- proc_init 执行后应保证进程管理全局结构、idleproc、current 和 initproc 都处于可用状态。
+- kernel_thread 应把普通函数包装成可创建线程的上下文，并返回新线程 PID。
+- do_fork 应返回新线程 PID 或负错误码。
+- copy_thread 与 copy_mm 作为内部辅助接口，分别负责首次运行现场和地址空间处理。
+
+[RELY]
+// 关键宏与常量
+KSTACKSIZE、PGSIZE、PROC_NAME_LEN
+MAX_PID、MAX_PROCESS
+SSTATUS_SPP、SSTATUS_SPIE、SSTATUS_SIE
+PROC_UNINIT、PROC_RUNNABLE、PROC_SLEEPING、PROC_ZOMBIE
+
+// 关键数据结构
+struct proc_struct：包含 state、pid、runs、kstack、need_resched、parent、mm、context、tf、pgdir、flags、name、list_link、hash_link
+struct context：保存 ra、sp、s0~s11 等被调用者保存寄存器
+struct trapframe：保存通用寄存器以及 sepc、sstatus、scause、stval 等陷阱相关 CSR 子集
+list_entry_t、proc_list、hash_list
+全局变量：current、idleproc、initproc、nr_process
+
+// 可调用的已有函数/符号
+内存与字符串：kmalloc()、kfree()、memset()、memcpy()、alloc_pages()、free_pages()、page2kva()、kva2page()
+进程管理：set_proc_name()、find_proc()、get_pid()、wakeup_proc()、hash_list_add()、list_init()、list_add()
+地址空间/页表：boot_pgdir_pa、boot_pgdir_va、copy_mm() 相关接口
+启动与首次运行链路：bootstack、read_csr(sstatus)、kernel_thread_entry、forkret、forkrets
+错误码：-E_NO_MEM、-E_INVAL 等，以工程 error.h 为准
+
+[GUARANTEE]
+必须实现或修改的接口：
+
+```c
+static struct proc_struct *alloc_proc(void);
+void proc_init(void);
+int kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags);
+int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf);
+static void copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapframe *tf);
+static int copy_mm(uint32_t clone_flags, struct proc_struct *proc);
+
+你可以根据需要添加：
+- 辅助函数（建议设为 static，仅在本模块内部使用，不改变公开接口）
+- 模块内部使用的宏定义
+- 模块内部的静态变量
+
+[SPECIFICATION]
+
+## alloc_proc
+
+**Pre-Condition**：系统处于可以分配内核内存的初始化或运行阶段，期望得到一个可供后续初始化的 PCB。
+
+**Post-Condition**：
+- 成功时返回一个已分配且字段处于安全空白状态的 struct proc_struct *。
+- 失败时返回 NULL，且不留下未释放的资源。
+
+**Case 1**：kmalloc() 分配 PCB 成功。
+- 将 PCB 的字段初始化为安全空白状态，至少包括：
+  - state = PROC_UNINIT
+  - pid = -1
+  - runs = 0
+  - kstack = 0
+  - need_resched = 0
+  - parent = NULL
+  - mm = NULL
+  - context 清零
+  - tf = NULL
+  - pgdir = NULL 或按工程约定设置
+  - flags = 0
+  - name 清零
+  - list_link、hash_link 清零或按工程约定初始化
+- 返回 PCB 指针。
+
+**Case 2**：kmalloc() 失败。
+- 返回 NULL，不修改任何全局状态。
+
+**Requirements**：
+- alloc_proc() 不得把 PCB 留在“部分字段未初始化”的状态，避免后续 do_fork() 或调度代码误用未初始化字段。
+- 不得在 alloc_proc() 中分配内核栈、PID 或挂接链表；这些由 do_fork() 等上层函数完成。
+
+## proc_init
+
+**Pre-Condition**：pmm_init()、vmm_init() 等基础初始化已经完成。
+
+**Post-Condition**：
+- proc_list、hash_list 等全局结构已初始化。
+- idleproc 已创建并成为当前线程，current == idleproc。
+- idleproc 的关键字段符合特殊语义：PID 为 0，内核栈复用当前启动栈（如 bootstack），状态为 PROC_RUNNABLE，need_resched 置为 1，parent = NULL，mm = NULL，pgdir 指向内核页表根。
+- 通过 kernel_thread() 创建了 initproc，其 PID 为 1，状态为 PROC_RUNNABLE，并已登记到进程链表/哈希表。
+- nr_process 正确反映当前已登记线程数。
+
+**Case 1**：idleproc 初始化。
+- 直接复用当前执行现场创建 idleproc，而不是通过普通 do_fork()。
+- 设置 idleproc->pid = 0、idleproc->kstack = 当前启动栈、idleproc->state = PROC_RUNNABLE、idleproc->need_resched = 1、idleproc->parent = NULL、idleproc->mm = NULL、idleproc->pgdir = boot_pgdir_pa 或工程约定值。
+- 设置 current = idleproc，将 idleproc 挂接到 proc_list 和 hash_list。
+- 设置进程名，如 "idle"。
+
+**Case 2**：创建 initproc。
+- 调用 kernel_thread(init_main, NULL, 0) 或工程约定的初始化函数创建第一个真正内核线程。
+- 若创建失败，应按工程约定 panic() 或报告错误，因为系统至少需要一个可运行线程。
+- 成功后将 initproc 指向新线程，设置名称如 "init"，并保证其已登记到 proc_list 和 hash_list。
+
+**Requirements**：
+- idleproc 不是普通 fork 出来的线程，其 PID、内核栈、调度标记和 current 位置具有特殊含义。
+- proc_init() 完成后，idleproc 和 initproc 必须都处于 PROC_RUNNABLE，且 idleproc->need_resched 为 1，以便后续 cpu_idle() 触发第一次调度。
+- 全局链表和哈希表的一致性必须保持。
+
+## kernel_thread
+
+**Pre-Condition**：系统已经能够进行内核栈分配和 PCB 分配，希望以函数 fn 和参数 arg 创建一个新的内核线程。
+
+**Post-Condition**：
+- 成功时返回新线程的 PID（正整数）。
+- 失败时返回负错误码。
+- 新线程的首次运行上下文已通过 do_fork() 和 copy_thread() 构造完成。
+
+**Case 1**：正常创建。
+- 构造一个临时的 struct trapframe tf，清零后设置：
+  - tf.sepc = (uintptr_t)kernel_thread_entry
+  - tf.sstatus 按 RISC-V 要求设置：读取当前 sstatus，设置 SPP 和 SPIE，清除 SIE，以表示返回到内核态并保持中断使能状态。
+  - 将 fn 放入 tf 中对应被调用函数入口的寄存器（如 s0），将 arg 放入参数寄存器（如 s1）。
+- 调用 do_fork(clone_flags, 0, &tf)。
+- 返回 do_fork() 的返回值。
+
+**Case 2**：do_fork() 失败。
+- 返回 do_fork() 返回的负错误码，不留下临时资源。
+
+**Requirements**：
+- kernel_thread() 只负责构造首次运行所需的临时 trapframe 并调用 do_fork()；不直接分配内核栈、不直接挂接链表。
+- 设置的 tf.sstatus 必须保证新线程首次通过 sret 返回后处于内核态（S 态），且中断状态符合工程约定。
+
+## do_fork
+
+**Pre-Condition**：
+- alloc_proc()、内核栈分配、copy_mm()、copy_thread() 等依赖接口可用。
+- 调用者提供 clone_flags、stack 和可选的 tf。
+
+**Post-Condition**：
+- 成功时返回新线程/进程的 PID，新 PCB 已初始化、内核栈已分配、上下文和 trapframe 已构造、已挂接到 proc_list 和 hash_list，状态为 PROC_RUNNABLE。
+- 失败时返回负错误码，并释放已经占用的资源，不留下半初始化 PCB 或泄漏的内核栈。
+
+按顺序完成：
+1. 调用 alloc_proc() 分配并初始化 PCB；失败返回 -E_NO_MEM。
+2. 为 PCB 分配内核栈；失败则释放 PCB 并返回 -E_NO_MEM。
+3. 调用 copy_mm(clone_flags, proc) 处理地址空间；当前实验阶段 copy_mm() 为占位，通常直接成功。
+4. 调用 copy_thread(proc, stack, tf) 设置新线程的 trapframe 和 context。
+5. 为新 PCB 分配 PID（如 get_pid()），设置 proc->pid。
+6. 将 PCB 挂接到 proc_list 和 hash_list，增加 nr_process。
+7. 将新线程状态设为 PROC_RUNNABLE，必要时调用 wakeup_proc()。
+8. 返回新线程 PID。
+
+**Requirements**：
+- 失败路径必须成对清理：PCB、内核栈、已挂接的链表节点、已分配的 PID 等，不能泄漏。
+- 新 PCB 在完全初始化并挂接之前，不得被调度器选中。
+- do_fork() 返回的 PID 必须是正整数；失败返回负错误码。
+- 当前实验阶段 copy_mm() 不进行真正的用户地址空间复制，因为内核线程的 current->mm 为 NULL，proc->mm 描述的用户地址空间留待后续实验。
+
+## copy_thread
+
+**Pre-Condition**： proc 已分配 PCB 和内核栈；tf 可能是 kernel_thread() 构造的临时 trapframe，也可能是其他调用者提供的 trapframe。
+
+**Post-Condition**：
+- 在新线程自己的内核栈上分配并构造了 proc->tf。
+- proc->context 已设置，使得 switch_to() 恢复该线程后能通过 forkret -> forkrets -> __trapret 首次运行。
+- proc->tf 中的返回值和参数符合“新线程”的语义。
+
+按顺序完成：
+- 在新内核栈顶分配 struct trapframe 空间，令 proc->tf 指向它。
+- 若传入 tf 非 NULL，将其内容复制到新 trapframe；否则清零初始化。
+- 设置新 trapframe 的返回值寄存器（如 a0）为 0，表示子线程/子进程返回值。
+- 设置 proc->context.ra = (uintptr_t)forkret。
+- 设置 proc->context.sp 指向新 trapframe 或按工程约定指向内核栈顶。
+- 保证 trapframe 中的 sepc 和 sstatus 能通过 sret 跳到 kernel_thread_entry 并以 S 态运行。
+
+**Requirements**：
+- copy_thread() 必须把 trapframe 放在新线程自己的内核栈上，而不是复用父线程的栈。
+- context.ra 必须指向 forkret，context.sp 必须与 trapframe 布局配合，保证 forkret -> forkrets -> __trapret 链路正确。
+- 不得直接修改父线程的 trapframe 或 context。
+
+## copy_mm
+
+当前实验阶段不进行真正的用户地址空间复制，proc->mm 保持 NULL，函数返回 0。只为后续实验保留完整函数形态，便于扩展为用户地址空间复制。不得因为 current->mm == NULL 而崩溃或返回错误，应安全地作为占位接口返回成功；不得在 copy_mm() 中分配或复制用户页表。
 
 ````
 
 #### 实现迭代过程
 
-本模块的实现经历了 [N] 次迭代，过程如下：
+本模块的实现经历了 1 次迭代，过程如下：
 
 ---
 
 ##### 第一次迭代
 
-如果设计的prompt生成代码后出现问题：
+完成模块二后，运行make grade发现报错：
+```text
+error: passing argument 1 of 'kernel_thread' from incompatible pointer type [-Wincompatible-pointer-types]
+```
 
-**遇到的问题：**
-- 问题1：问题描述、错误信息和原因分析
-- 问题2：问题描述、错误信息和原因分析
+原因是框架测试的函数指针类型和 kernel_thread 声明不一致，而 GCC 14 开始把 -Wincompatible-pointer-types 从警告升级为默认错误，所以编译 test_lab4.o 时失败。在Makefile的CFLAGS 区域加一行编译选项：
+```text
+CFLAGS  += -Wno-error=incompatible-pointer-types
+```
 
-**问题解决策略：**
-- 针对问题1：[说明如何修改提示词]
-- 针对问题2：[说明如何修改提示词]
-
-如果没有问题：
-
-**最终结果：**
-
-经过 [N] 次迭代，该模块最终：
-- ✅ 编译通过
-- ✅ 所有相关测试通过
-- ✅ 功能符合预期
-
-**关键改进点总结（如有）：**
-1. [改进点1：例如，在 [RELY] 中补充了完整的系统调用号定义]
-2. [改进点2：例如，在 [SPECIFICATION] 中明确了异常处理的边界条件]
-3. [改进点3：例如，增加了对用户指针合法性检查的要求]
+修改后相关文件编译链接通过。
 
 ---
-
-##### 第二次迭代（如有）
-
-[按照和第一次迭代相同的格式]
-
----
-
-##### 第三次迭代（如有）
-
-[按照和第一次迭代相同的格式]
-
----
-
-
 
 ### 功能模块三：进程调度
 
@@ -332,26 +578,6 @@ int another_function(int arg);
 - 测试通过的结果（make grade），只有一个
 -->
 
-### 功能模块一验证（2413671-吕旭婧）
-
-测试副本的 `pmm.c` 与正式开发目录的 Git 内容哈希一致。第一轮只启用独立入口，保留启动汇编、设备树解析和原样的 `pmm_init()`，串口输出 `check_pgdir() succeeded!` 和 `check_boot_pgdir() succeeded!`，随后正常退出。第二轮加入额外断言，再次通过两项原有自检并完成下表测试。两次 QEMU 退出码均为 `0`。 [原有自检日志](verification/module1/02-original-qemu.log#L41) · [首轮退出码](verification/module1/02-original-qemu.exit) · [额外测试日志](verification/module1/03-extra-qemu.log#L46) · [第二轮退出码](verification/module1/03-extra-qemu.exit)
-
-![模块一原有页表自检通过](./images/module1-page-table-checks.png)
-
-图 1：QEMU 4.1.1 原有页表自检日志回看，两项自检均通过。
-
-| 额外测试 | 结果 |
-|---|---|
-| 同页降权 | `PTE_W` 清除，PPN 不变，引用计数保持 `1`，空闲页数不变。另行读取同一 VA，读到原值 `0x11223344`。 |
-| 实际换页与别名 | 同一 VA 从 `0x11223344` 变为 `0xaabbccdd`，旧页别名仍读到 `0x11223344`。换页后旧页引用为 `1`，空闲页数不变。撤销最后一个别名后，旧页引用归零，空闲页数加 `1`。 |
-| 有效删除、重复删除与缺表删除 | 有效删除清零 PTE，数据页引用归零，空闲页数加 `1`，两级中间表保留。重复删除没有再次减少引用。缺根项和缺下一级表两种情况下均未创建页表，空闲页数不变。 |
-| 两次分配失败与重试 | 两次均返回 `-E_NO_MEM`（`-4`），没有末级映射，目标数据页引用仍为 `0`。第一次失败未留下表页。第二次保留一张空表，空闲页数减 `1`，重试沿用该表，只再分配一张表页便成功。 |
-
-额外断言全部执行完毕，清理测试用页表后空闲页数恢复。降权后的写入异常、撤销映射后的访问异常，以及进程创建、调度和完整评分均未运行。 [测试代码及复现说明](verification/module1/README.md)
-
-![模块一额外测试：换页读取、分配失败与重试](./images/module1-mapping-extra-tests.png)
-
-图 2：QEMU 4.1.1 额外测试日志回看。同一虚拟地址换页后读到新值；第二次表页分配失败后，重试复用已挂接的空表，额外断言全部执行完毕。
 
 ---
 

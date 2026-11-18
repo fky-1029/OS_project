@@ -2,6 +2,7 @@
 #include <kmalloc.h>
 #include <string.h>
 #include <sync.h>
+#include <riscv.h>
 #include <pmm.h>
 #include <error.h>
 #include <sched.h>
@@ -218,7 +219,181 @@ init_main(void *arg)
     return 0;
 }
 
-//LAB4 function2 YOUR CODE
+//LAB4 function2 2413406
+// alloc_proc - 分配 PCB 并置为安全空白状态，不分配内核栈或 PID，也不挂接链表
+static struct proc_struct *
+alloc_proc(void)
+{
+    struct proc_struct *proc = kmalloc(sizeof(struct proc_struct));
+    if (proc != NULL)
+    {
+        proc->state = PROC_UNINIT;
+        proc->pid = -1;
+        proc->runs = 0;
+        proc->kstack = 0;
+        proc->need_resched = 0;
+        proc->parent = NULL;
+        proc->mm = NULL;
+        memset(&(proc->context), 0, sizeof(struct context));
+        proc->tf = NULL;
+        proc->pgdir = 0;
+        proc->flags = 0;
+        memset(proc->name, 0, sizeof(proc->name));
+        list_init(&(proc->list_link));
+        list_init(&(proc->hash_link));
+    }
+    return proc;
+}
 
+// copy_thread - 在新线程内核栈顶构造 trapframe，并设置首次运行到 forkret 的上下文
+static void
+copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapframe *tf)
+{
+    proc->tf = (struct trapframe *)(proc->kstack + KSTACKSIZE) - 1;
+    if (tf != NULL)
+    {
+        *(proc->tf) = *tf;
+    }
+    else
+    {
+        memset(proc->tf, 0, sizeof(struct trapframe));
+    }
+    proc->tf->gpr.a0 = 0;
+    proc->tf->gpr.sp = (esp == 0) ? (uintptr_t)proc->tf : esp;
+    proc->context.ra = (uintptr_t)forkret;
+    proc->context.sp = (uintptr_t)proc->tf;
+}
+
+// copy_mm - 当前实验阶段占位：不复制用户地址空间，只使用内核页表根
+static int
+copy_mm(uint32_t clone_flags, struct proc_struct *proc)
+{
+    (void)clone_flags;
+    proc->mm = NULL;
+    proc->pgdir = boot_pgdir_pa;
+    return 0;
+}
+
+// do_fork - 创建新线程/进程：PCB、内核栈、地址空间、上下文、PID、登记和唤醒
+int
+do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
+{
+    int ret = -E_NO_FREE_PROC;
+    struct proc_struct *proc;
+
+    // 检查进程数是否已达上限
+    if (nr_process >= MAX_PROCESS)
+    {
+        goto fork_out;
+    }
+    ret = -E_NO_MEM;
+    // 1. 分配并初始化 PCB
+    if ((proc = alloc_proc()) == NULL)
+    {
+        goto fork_out;
+    }
+    proc->parent = current;
+
+    // 2. 分配新线程的内核栈
+    if (setup_kstack(proc) != 0)
+    {
+        goto bad_fork_cleanup_proc;
+    }
+    // 3. 地址空间处理（当前阶段为占位）
+    if (copy_mm(clone_flags, proc) != 0)
+    {
+        goto bad_fork_cleanup_kstack;
+    }
+    // 4. 构造新线程的 trapframe 和切换上下文
+    copy_thread(proc, stack, tf);
+
+    // 5. 关中断登记 PID、哈希表和进程链表
+    bool intr_flag;
+    local_intr_save(intr_flag);
+    {
+        proc->pid = get_pid();
+        hash_proc(proc);
+        list_add(&proc_list, &(proc->list_link));
+        nr_process++;
+    }
+    local_intr_restore(intr_flag);
+
+    // 6. 唤醒新线程，使其可被调度器选中
+    wakeup_proc(proc);
+    ret = proc->pid;
+
+fork_out:
+    return ret;
+
+// 失败清理：释放已分配的内核栈和 PCB
+bad_fork_cleanup_kstack:
+    put_kstack(proc);
+bad_fork_cleanup_proc:
+    kfree(proc);
+    goto fork_out;
+}
+
+// kernel_thread - 把 fn(arg) 包装成新线程，构造首次从 kernel_thread_entry 执行的 trapframe
+int
+kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags)
+{
+    struct trapframe tf;
+    memset(&tf, 0, sizeof(struct trapframe));
+    // s0 放函数入口，s1 放参数，由 kernel_thread_entry 取出
+    tf.gpr.s0 = (uintptr_t)fn;
+    tf.gpr.s1 = (uintptr_t)arg;
+    tf.gpr.ra = (uintptr_t)kernel_thread_entry;
+    // 首次 sret 返回 S 态，并让新线程运行在中断使能状态
+    tf.status = (read_csr(sstatus) | SSTATUS_SPP | SSTATUS_SPIE) & ~SSTATUS_SIE;
+    tf.epc = (uintptr_t)kernel_thread_entry;
+    return do_fork(clone_flags, 0, &tf);
+}
+
+// proc_init - 初始化进程管理全局结构，创建 idleproc 和 initproc
+void
+proc_init(void)
+{
+    int i;
+
+    // 初始化进程链表和 PID 哈希表
+    list_init(&proc_list);
+    for (i = 0; i < HASH_LIST_SIZE; i++)
+    {
+        list_init(hash_list + i);
+    }
+
+    // idleproc 复用当前启动栈，不作为普通线程挂入 proc_list
+    if ((idleproc = alloc_proc()) == NULL)
+    {
+        panic("cannot alloc idleproc.\n");
+    }
+    idleproc->pid = 0;
+    idleproc->state = PROC_RUNNABLE;
+    idleproc->kstack = (uintptr_t)bootstack;
+    idleproc->need_resched = 1;
+    idleproc->parent = NULL;
+    idleproc->mm = NULL;
+    idleproc->pgdir = boot_pgdir_pa;
+    set_proc_name(idleproc, "idle");
+    nr_process++;
+    current = idleproc;
+
+    // 通过 kernel_thread 创建第一个真正的内核线程 initproc
+    int pid = kernel_thread(init_main, "Hello world!!", 0);
+    if (pid <= 0)
+    {
+        panic("create init_main failed.\n");
+    }
+    // 从哈希表中找回 initproc 并设置名称
+    initproc = find_proc(pid);
+    if (initproc == NULL)
+    {
+        panic("find initproc failed.\n");
+    }
+    set_proc_name(initproc, "init");
+
+    assert(idleproc != NULL && idleproc->pid == 0);
+    assert(initproc != NULL && initproc->pid == 1);
+}
 
 //LAB4 function3 YOUR CODE
