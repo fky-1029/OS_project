@@ -221,4 +221,34 @@ init_main(void *arg)
 //LAB4 function2 YOUR CODE
 
 
-//LAB4 function3 YOUR CODE
+// cpu_idle - at the end of kern_init, the kernel will go to cpu_idle, and the
+// idle process will wait until a runnable process needs to be rescheduled.
+// NOTE: this function never returns.
+void
+cpu_idle(void) {
+    while (1) {
+        if (current->need_resched) {
+            schedule();
+        }
+    }
+}
+
+// proc_run - make process "proc" running on cpu
+// NOTE: before calling switch_to, load the base addr of "proc"'s new PDT into
+//       satp (using Sv39 mode), flush the TLB, and update "current" inside the
+//       same critical section so that current/tf/pgdir stay consistent.
+void
+proc_run(struct proc_struct *proc) {
+    if (proc != current) {
+        bool intr_flag;
+        struct proc_struct *prev = current, *next = proc;
+        local_intr_save(intr_flag);
+        {
+            current = proc;
+            write_csr(satp, ((uintptr_t)SATP_MODE_SV39 << 60) | (next->pgdir >> RISCV_PGSHIFT));
+            flush_tlb();
+            switch_to(&(prev->context), &(next->context));
+        }
+        local_intr_restore(intr_flag);
+    }
+}
