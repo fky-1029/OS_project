@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |------|------|
 | **实验名称** | Lab 5: 用户程序 |
-| **小组成员** | 学号1-姓名1、学号2-姓名2、学号3-姓名3 |
+| **小组成员** | 2413406-黄婉文、2413396-范珂祎、2413671-吕旭婧 |
 | **完成日期** | YYYY-MM-DD |
 
 ### 小组分工
@@ -14,9 +14,9 @@
 
 | 成员 | 负责的练习/模块 |
 |------|----------------|
-| 学号1-姓名1 | [练习或模块名称] |
-| 学号2-姓名2 | [练习或模块名称] |
-| 学号3-姓名3 | [练习或模块名称] |
+| 2413406-黄婉文 | [练习或模块名称] |
+| 2413396-范珂祎 | [练习或模块名称] |
+| 2413671-吕旭婧 | [练习或模块名称] |
 
 实验报告如何分工？
 
@@ -40,9 +40,9 @@
 
 | 成员 | AI 编程工具 | 底层模型 | 备注 |
 |------|------------|---------|------|
-| 学号1-姓名1 | [例如：Cline（VS Code插件） / Claude Code（终端 Agent） / DeepSeek Harness等] | [例如：Claude Sonnet 4.5 / GPT-5.5 / DeepSeek-V4-Flash等] | [可选：特殊配置等] |
-| 学号2-姓名2 | | | |
-| 学号3-姓名3 | | | |
+| 2413406-黄婉文 | DeepSeek Harness | DeepSeek-Flash | 无 |
+| 2413396-范珂祎 | | | |
+| 2413671-吕旭婧 | | | |
 
 **说明：**
 - **AI 编程工具**：指具体使用的终端工具、编辑器插件、桌面应用或浏览器界面
@@ -76,7 +76,60 @@
 每个功能模块或者练习中可能包含多项任务，请根据实际情况调整
 -->
 
-### 功能模块：[模块名称]
+### 代码迁移
+
+**负责人：** 2413406-黄婉文
+
+本实验在lab2/lab3/lab4的代码基础上完成，需要用此前设计的提示词生成相应实验代码并填到注释的对应位置，确保代码能够正确编译。另外原来的 RESTORE_ALL 宏仅能用于纯内核、无用户态的系统，需要修改扩充为支持用户态/内核态双向异常返回的完整版上下文恢复宏。
+
+**需要实现/修改的函数：**
+
+```c
+// kern/mm/default_pmm.c
+static void default_init(void);
+static void default_init_memmap(struct Page *base, size_t n);
+static struct Page *default_alloc_pages(size_t n);
+static void default_free_pages(struct Page *base, size_t n);
+static size_t default_nr_free_pages(void);
+
+// kern/mm/pmm.c
+static void page_init(void);
+static void page_mapping_invalidate(pde_t *pgdir, uintptr_t la, bool table_entries_may_have_changed);
+static void page_mapping_put(struct Page *page);
+int page_insert(pde_t *pgdir, struct Page *page, uintptr_t la, uint32_t perm);
+void page_remove(pde_t *pgdir, uintptr_t la);
+
+// kern/trap/trap.c
+void interrupt_handler(struct trapframe *tf);
+void exception_handler(struct trapframe *tf);
+
+// kern/trap/trapentry.S
+RESTORE_ALL：支持用户态/内核态双向异常返回
+void __alltraps(void);
+
+// kern/process/proc.c 
+static int init_main(void *arg);
+static struct proc_struct *alloc_proc(void);
+static void copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapframe *tf);
+static int copy_mm(uint32_t clone_flags, struct proc_struct *proc);
+int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf);
+int kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags);
+void proc_init(void);
+int do_exit(int error_code);
+void cpu_idle(void);
+void proc_run(struct proc_struct *proc);
+
+// kern/schedule/sched.c
+void schedule(void);
+
+// kern/process/switch.S
+void switch_to(struct context *from, struct context *to);
+```
+
+其中，RESTORE_ALL 会先根据 tf->status 中的 SSTATUS_SPP 判断本次返回的目标特权级：若返回内核态，则保持 SAVE_ALL 设置的 sscratch = 0；若返回用户态，则把当前内核栈顶 sp + 36*REGBYTES 写回 sscratch，以便用户态下一次 trap 时 SAVE_ALL 能通过 csrrw sp, sscratch, sp 从用户栈切换到内核栈，最后再从 trapframe 恢复用户 sp；同时，恢复 sstatus、sepc 的临时寄存器由 t0 改为不会被提前覆盖的 s1 和 s2，而 x2、sp 仍在最后恢复。
+
+
+### 功能模块一：用户态系统调用功能
 
 **负责人：** [学号-姓名]
 
@@ -153,21 +206,270 @@ int another_function(int arg);
 
 ---
 
-### 练习：[练习标题]
+
+### 功能模块二：创建加载第一个用户进程功能
 
 **负责人：** [学号-姓名]
 
-[按照练习的具体要求进行解答]
+#### 模块功能描述
+
+**需要实现/修改的函数：**
+
+```c
+// 列出本模块涉及的所有函数签名
+void example_function(void);
+int another_function(int arg);
+```
+
+**功能说明：**
+
+[简要描述该模块的功能，包括：
+- 该模块在整个系统中的作用
+- 需要处理的主要场景
+- 与其他模块的交互关系]
+
+#### 最终提示词
+
+以下是经过迭代优化后，最终成功实现该功能的提示词：
+
+````markdown
+
+[按照提示词模板，给出具体的提示词]
+
+````
+
+#### 实现迭代过程
+
+本模块的实现经历了 [N] 次迭代，过程如下：
 
 ---
 
-### Challenge：[Challenge标题]
+##### 第一次迭代
+
+如果设计的prompt生成代码后出现问题：
+
+**遇到的问题：**
+- 问题1：问题描述、错误信息和原因分析
+- 问题2：问题描述、错误信息和原因分析
+
+**问题解决策略：**
+- 针对问题1：[说明如何修改提示词]
+- 针对问题2：[说明如何修改提示词]
+
+如果没有问题：
+
+**最终结果：**
+
+经过 [N] 次迭代，该模块最终：
+- ✅ 编译通过
+- ✅ 所有相关测试通过
+- ✅ 功能符合预期
+
+**关键改进点总结（如有）：**
+1. [改进点1：例如，在 [RELY] 中补充了完整的系统调用号定义]
+2. [改进点2：例如，在 [SPECIFICATION] 中明确了异常处理的边界条件]
+3. [改进点3：例如，增加了对用户指针合法性检查的要求]
+
+---
+
+##### 第二次迭代（如有）
+
+[按照和第一次迭代相同的格式]
+
+---
+
+##### 第三次迭代（如有）
+
+[按照和第一次迭代相同的格式]
+
+---
+
+
+
+### 功能模块三：复制用户进程功能
+
+**负责人：** [学号-姓名]
+
+#### 模块功能描述
+
+**需要实现/修改的函数：**
+
+```c
+// 列出本模块涉及的所有函数签名
+void example_function(void);
+int another_function(int arg);
+```
+
+**功能说明：**
+
+[简要描述该模块的功能，包括：
+- 该模块在整个系统中的作用
+- 需要处理的主要场景
+- 与其他模块的交互关系]
+
+#### 最终提示词
+
+以下是经过迭代优化后，最终成功实现该功能的提示词：
+
+````markdown
+
+[按照提示词模板，给出具体的提示词]
+
+````
+
+#### 实现迭代过程
+
+本模块的实现经历了 [N] 次迭代，过程如下：
+
+---
+
+##### 第一次迭代
+
+如果设计的prompt生成代码后出现问题：
+
+**遇到的问题：**
+- 问题1：问题描述、错误信息和原因分析
+- 问题2：问题描述、错误信息和原因分析
+
+**问题解决策略：**
+- 针对问题1：[说明如何修改提示词]
+- 针对问题2：[说明如何修改提示词]
+
+如果没有问题：
+
+**最终结果：**
+
+经过 [N] 次迭代，该模块最终：
+- ✅ 编译通过
+- ✅ 所有相关测试通过
+- ✅ 功能符合预期
+
+**关键改进点总结（如有）：**
+1. [改进点1：例如，在 [RELY] 中补充了完整的系统调用号定义]
+2. [改进点2：例如，在 [SPECIFICATION] 中明确了异常处理的边界条件]
+3. [改进点3：例如，增加了对用户指针合法性检查的要求]
+
+---
+
+##### 第二次迭代（如有）
+
+[按照和第一次迭代相同的格式]
+
+---
+
+##### 第三次迭代（如有）
+
+[按照和第一次迭代相同的格式]
+
+---
+
+
+
+### 功能模块四：其余系统调用功能
+
+**负责人：** [学号-姓名]
+
+#### 模块功能描述
+
+**需要实现/修改的函数：**
+
+```c
+// 列出本模块涉及的所有函数签名
+void example_function(void);
+int another_function(int arg);
+```
+
+**功能说明：**
+
+[简要描述该模块的功能，包括：
+- 该模块在整个系统中的作用
+- 需要处理的主要场景
+- 与其他模块的交互关系]
+
+#### 最终提示词
+
+以下是经过迭代优化后，最终成功实现该功能的提示词：
+
+````markdown
+
+[按照提示词模板，给出具体的提示词]
+
+````
+
+#### 实现迭代过程
+
+本模块的实现经历了 [N] 次迭代，过程如下：
+
+---
+
+##### 第一次迭代
+
+如果设计的prompt生成代码后出现问题：
+
+**遇到的问题：**
+- 问题1：问题描述、错误信息和原因分析
+- 问题2：问题描述、错误信息和原因分析
+
+**问题解决策略：**
+- 针对问题1：[说明如何修改提示词]
+- 针对问题2：[说明如何修改提示词]
+
+如果没有问题：
+
+**最终结果：**
+
+经过 [N] 次迭代，该模块最终：
+- ✅ 编译通过
+- ✅ 所有相关测试通过
+- ✅ 功能符合预期
+
+**关键改进点总结（如有）：**
+1. [改进点1：例如，在 [RELY] 中补充了完整的系统调用号定义]
+2. [改进点2：例如，在 [SPECIFICATION] 中明确了异常处理的边界条件]
+3. [改进点3：例如，增加了对用户指针合法性检查的要求]
+
+---
+
+##### 第二次迭代（如有）
+
+[按照和第一次迭代相同的格式]
+
+---
+
+##### 第三次迭代（如有）
+
+[按照和第一次迭代相同的格式]
+
+---
+
+
+
+### Challenge 1：实现 Copy on Write （COW）机制
 
 **负责人：** [学号-姓名]
 
 [按照Challenge的具体要求进行解答]
 
 ---
+
+
+### Challenge 2
+
+**负责人：** [学号-姓名]
+
+[按照Challenge的具体要求进行解答]
+
+---
+
+
+### 分支任务：gdb 调试系统调用以及返回
+
+**负责人：** [学号-姓名]
+
+[按照Challenge的具体要求进行解答]
+
+---
+
 
 ## 五、测试与验证
 

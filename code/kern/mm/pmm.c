@@ -88,6 +88,78 @@ size_t nr_free_pages(void)
 }
 
 //lab2 请补充你在lab2中的代码
+static void page_init(void)
+{
+    extern char end[];
+    uint64_t mem_base = get_memory_base();
+    uint64_t mem_size = get_memory_size();
+
+    if (mem_base == 0 || mem_size == 0)
+    {
+        panic("page_init: missing or empty physical memory range");
+    }
+    if (mem_size > ~(uint64_t)0 - mem_base)
+    {
+        panic("page_init: physical memory range overflows");
+    }
+    if (mem_base != DRAM_BASE)
+    {
+        panic("page_init: memory base is incompatible with the fixed DRAM mapping");
+    }
+
+    uint64_t mem_end = mem_base + mem_size;
+    uintptr_t physical_memory_end = KERNTOP - PHYSICAL_MEMORY_OFFSET;
+    uintptr_t kernel_begin_paddr = KERNBASE - PHYSICAL_MEMORY_OFFSET;
+    uintptr_t managed_end = ROUNDDOWN(
+        mem_end < physical_memory_end ? (uintptr_t)mem_end : physical_memory_end,
+        PGSIZE);
+    va_pa_offset = PHYSICAL_MEMORY_OFFSET;
+
+    cprintf("Physical memory detected: [0x%016lx, 0x%016lx), size 0x%016lx\n",
+            mem_base, mem_end, mem_size);
+    if (managed_end <= kernel_begin_paddr ||
+        (uintptr_t)end < KERNBASE || (uintptr_t)end > KERNTOP)
+    {
+        panic("page_init: physical memory cannot cover the kernel layout");
+    }
+
+    uintptr_t kernel_end_pa = PADDR((uintptr_t)end);
+    if (kernel_end_pa > managed_end)
+    {
+        panic("page_init: kernel extends beyond manageable physical memory");
+    }
+
+    npage = PPN(managed_end);
+    size_t descriptor_count = npage - nbase;
+    if (descriptor_count > ~(size_t)0 / sizeof(struct Page))
+    {
+        panic("page_init: page-descriptor array size overflows");
+    }
+    size_t descriptor_bytes = descriptor_count * sizeof(struct Page);
+    uintptr_t descriptors_pa = ROUNDUP(kernel_end_pa, PGSIZE);
+
+    if (descriptors_pa > managed_end ||
+        descriptor_bytes > managed_end - descriptors_pa)
+    {
+        panic("page_init: not enough memory for page descriptors");
+    }
+    pages = (struct Page *)(descriptors_pa + va_pa_offset);
+    for (size_t i = 0; i < descriptor_count; i++)
+    {
+        struct Page *p = &pages[i];
+        p->flags = 0;
+        p->property = 0;
+        set_page_ref(p, 0);
+        SetPageReserved(p);
+    }
+
+    uintptr_t free_start_pa = ROUNDUP(descriptors_pa + descriptor_bytes, PGSIZE);
+    if (free_start_pa < managed_end)
+    {
+        init_memmap(pa2page(free_start_pa),
+                    (managed_end - free_start_pa) / PGSIZE);
+    }
+}
 
 // boot_map_segment - setup&enable the paging mechanism
 // parameters
@@ -322,6 +394,71 @@ void exit_range(pde_t *pgdir, uintptr_t start, uintptr_t end)
 
 
 //lab4 请补充你在lab4中的代码
+static void page_mapping_invalidate(pde_t *pgdir, uintptr_t la,
+                                    bool table_entries_may_have_changed)
+{
+    asm volatile("" ::: "memory");
+    if (table_entries_may_have_changed)
+    {
+        flush_tlb();
+    }
+    else
+    {
+        tlb_invalidate(pgdir, la);
+    }
+    asm volatile("" ::: "memory");
+}
+
+static void page_mapping_put(struct Page *page)
+{
+    if (page_ref_dec(page) == 0)
+    {
+        free_page(page);
+    }
+}
+
+int page_insert(pde_t *pgdir, struct Page *page, uintptr_t la, uint32_t perm)
+{
+    pte_t *ptep = get_pte(pgdir, la, 0);
+    bool create_tables = ptep == NULL;
+    if (create_tables)
+    {
+        ptep = get_pte(pgdir, la, 1);
+        if (ptep == NULL)
+        {
+            page_mapping_invalidate(pgdir, la, 1);
+            return -E_NO_MEM;
+        }
+    }
+
+    struct Page *old_page = (*ptep & PTE_V) ? pte2page(*ptep) : NULL;
+    if (old_page != page)
+    {
+        page_ref_inc(page);
+    }
+    *ptep = pte_create(page2ppn(page), perm);
+    page_mapping_invalidate(pgdir, la, create_tables);
+
+    if (old_page != NULL && old_page != page)
+    {
+        page_mapping_put(old_page);
+    }
+    return 0;
+}
+
+void page_remove(pde_t *pgdir, uintptr_t la)
+{
+    pte_t *ptep = get_pte(pgdir, la, 0);
+    if (ptep == NULL || !(*ptep & PTE_V))
+    {
+        return;
+    }
+
+    struct Page *page = pte2page(*ptep);
+    *ptep = 0;
+    page_mapping_invalidate(pgdir, la, 0);
+    page_mapping_put(page);
+}
 
 
 // invalidate a TLB entry, but only if the page tables being
