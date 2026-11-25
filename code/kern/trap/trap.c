@@ -99,6 +99,7 @@ extern struct mm_struct *check_mm_struct;
 #define SHUTDOWN_AFTER 10
 static int print_ticks_count = 0;
 
+// interrupt_handler - 按 cause 处理各类中断，时钟中断负责推进 ticks 并触发计时输出
 void interrupt_handler(struct trapframe *tf)
 {
     intptr_t cause = (tf->cause << 1) >> 1;
@@ -143,10 +144,15 @@ void interrupt_handler(struct trapframe *tf)
     }
 }
 
+// exception_handler - 处理同步异常；用户 ecall 先前移 epc，再交给 syscall 分发
 void exception_handler(struct trapframe *tf)
 {
     switch (tf->cause)
     {
+        case CAUSE_USER_ECALL:
+            tf->epc += 4;
+            syscall();
+            break;
         case CAUSE_ILLEGAL_INSTRUCTION:
             cprintf("Illegal instruction at 0x%08x\n", tf->epc);
             tf->epc += ((*(uint16_t *)tf->epc) & 0x3) == 0x3 ? 4 : 2;
@@ -161,7 +167,7 @@ void exception_handler(struct trapframe *tf)
     }
 }
 
-//lab5 function1 YOUR CODE update exception_handler
+//lab5 function1 2413406 update exception_handler
 
 
 static inline void trap_dispatch(struct trapframe *tf)
