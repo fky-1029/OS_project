@@ -555,27 +555,189 @@ int another_function(int arg);
 
 ### Challenge 1：实现 Copy on Write （COW）机制
 
-**负责人：** [学号-姓名]
+**负责人：** 2413406-黄婉文
 
-[按照Challenge的具体要求进行解答]
+由于本部分篇幅过长，方便起见将其写成一份单独报告，详见report/cow.md。
 
 ---
 
 
-### Challenge 2
+### Challenge 2：思考题
 
-**负责人：** [学号-姓名]
+**负责人：** 2413406-黄婉文
 
-[按照Challenge的具体要求进行解答]
+**说明该用户程序是何时被预先加载到内存中的？与我们常用操作系统的加载有何区别，原因是什么？**
+
+ucore 中，用户程序是通过 KERNEL_EXECVE / KERNEL_EXECVE2 这类宏在编译链接阶段直接嵌入内核镜像的，因此内核被OpenSBI 装入内存启动时，这段用户程序二进制代码已经作为内核镜像的一部分存在于内核地址空间中了，user_main 调用 kernel_execve 时只需从内存符号取出二进制码交给 do_execve，再由 load_icode 把它装入当前进程的新地址空间；而常用操作系统中的用户程序通常存放在磁盘文件系统里，exec 时才从磁盘读取 ELF，并常配合按需分页只加载实际访问的页。ucore 这样做是因为文件系统还没有实现，因此只能把用户程序直接链接进内核。
+
 
 ---
 
 
 ### 分支任务：gdb 调试系统调用以及返回
 
-**负责人：** [学号-姓名]
+**负责人：** 2413406-黄婉文
 
-[按照Challenge的具体要求进行解答]
+#### 任务内容
+
+本任务需要用双重gdb的方式调试系统调用的完整流程，观察从用户态触发系统调用到返回用户态的完整过程，包括特权级切换、参数传递、内核处理等关键环节。
+
+系统调用流程如下：用户程序调用用户库封装函数时，把系统调用号放入 a0、参数放入 a1～a5，并执行 ecall 触发从 U 态到 S 态的异常；硬件进入 trap 入口后保存现场并形成 trapframe，exception_handler 识别出 CAUSE_USER_ECALL 后将 epc 前移并调用 syscall，syscall 从 current->tf 中取出系统调用号和参数、按编号分发到对应 sys_* 函数，必要时用 user_mem_check 检查用户指针，再调用 do_exit、do_fork、do_wait、do_execve、do_yield、do_kill 等内核入口完成实际处理，并把返回值写回 a0；最后沿 trap 返回路径由 RESTORE_ALL 恢复通用寄存器及 sstatus、sepc 等 CSR，执行 sret 根据 sstatus 中的特权级信息返回 U 态，用户程序从 ecall 的下一条指令继续执行并取得系统调用返回值。
+
+由于所有的系统调用接口都是对syscall函数的封装，而syscall会使用内联汇编调用ecall，从而触发中断，因此可以在调试内核时在ecall指令上打断点，让ucore运行到这个ecall指令之前停住，然后在qemu内部断点调试，跟踪qemu的ecall处理逻辑；ecall处理完之后移除掉原本的断点，让ucore停在返回用户态之前的sret指令处，找到qemu处理sret指令的代码并设置断点跟踪执行，观察控制流到用户态的返回过程。
+
+#### 调试过程
+
+1. 配置环境
+
+首先在根目录执行以下命令，编译调试版的qemu：
+
+```code
+cd qemu-4.1.1
+make distclean   # 清理之前的编译结果
+# 重新配置，带上调试选项
+./configure --target-list=riscv32-softmmu,riscv64-softmmu --enable-debug
+# 重新编译
+make -j$(nproc)
+```
+
+编译完成之后，可以在riscv64-softmmu目录下找到一个qemu-system-riscv64。在项目的Makefile文件中，把QEMU的地址改为该文件地址。
+
+```code
+ifndef QEMU
+QEMU := $(HOME)/qemu-4.1.1/riscv64-softmmu/qemu-system-riscv64
+endif
+```
+
+2. 启动gdb
+   
+调试过程一共要用到三个窗口：qemu模拟器、调试qemu进程、qemu中调试ucore内核（后续分别对应终端1、2、3）。包含两个gdb会话：一个使用普通的gdb命令，附加到QEMU进程本身，用于调试QEMU的源码；另一个使用riscv64-unknown-elf-gdb，通过QEMU提供的调试接口连接，用于调试运行在模拟器中的ucore内核。
+
+（1）在终端1执行make debug，启动调试版QEMU并停在初始状态。
+
+（2）在终端2执行`pgrep -f qemu-system-riscv64`，获取QEMU进程的PID；然后执行`sudo gdb`启动本机的gdb，执行`attach <PID>`附加到QEMU进程；由于QEMU 写串口或 gdbstub 套接字失败时会触发 SIGPIPE，此时 gdb 默认会停下并打印，把单步调试打断，所以要执行`handle SIGPIPE nostop noprint`指令让调试器忽略这个信号、让 QEMU 继续运行。此时可以在 QEMU 侧设置与 ecall 相关的断点：
+
+```gdb
+break riscv_raise_exception
+break riscv_cpu_do_interrupt
+continue
+```
+
+（3）终端3在项目目录下执行`make gdb`。由于目前的makefile中用于调试的make debug和make gdb只加载了内核本身的调试信息，而不包括用户程序的调试信息，因此需要手动加载用户程序的符号。以 exit.c 为例，使用以下指令加载用户程序符号表：
+
+```gdb
+add-symbol-file obj/__user_exit.out
+```
+
+加载成功后，直接在用户库函数的syscall处打断点：
+
+```gdb
+break user/libs/syscall.c:9
+```
+
+<!-- 此处有截图 -->
+
+3. 调试 ecall
+
+（1）在终端3让ucore继续执行，直到停在用户态的syscall函数。由于 ecall 在 C 函数的内联汇编里，需要用单步调试`si`执行汇编指令，直到ecall之前。可以用`x/7i $pc`观察后续几条汇编指令找到ecall，看到以下指令：
+
+```asm
+0x800104 <syscall+44>:  ecall
+0x800108 <syscall+48>:  sd  a0,28(sp)
+0x80010c <syscall+52>:  lw  a0,28(sp)
+0x80010e <syscall+54>:  addi sp,sp,144
+0x800110 <syscall+56>:  ret
+```
+
+此时可以用以下指令观察记录参数。以 exit 程序为例，第一次 ecall 应该由 cprintf 触发，系统调用号是 SYS_putc，因此 a0 = 30，a1 是待输出字符。
+
+```gdb
+p/x $pc
+p/x $a0
+p/x $a1
+p/x $a2
+```
+
+<!-- 此处有截图 -->
+
+（2）由于之前已经在终端2为qemu打下了断点，因此现在继续跟踪ucore执行ecall指令即可。在终端3执行 `si` 让ucore执行ecall，终端2中qemu的gdb会停在异常处理路径上，可用以下指令查看当前状态：
+
+```gdb
+p/x env->pc
+p/x env->sepc
+p/x env->scause
+p env->priv
+p/x env->mstatus
+p/x env->sscratch
+```
+
+<!-- 此处有截图 -->
+
+此时pc指向用户态ecall指令，sepc保存了ecall的地址，scause为8即 RISCV_EXCP_U_ECALL，特权级priv从 U 态切换到 S 态；
+sstatus.SPP 为 0，表示异常来自 U 态；sstatus.SPIE 保存进入异常前的 SIE，SIE 被清零；stvec 指向内核的__alltraps。
+
+继续单步 QEMU 源码，可以看到 QEMU 设置了 sepc、scause、sstatus，并把 pc 改为 stvec。
+
+<!-- 此处有截图 -->
+
+（3）QEMU 处理完异常后，控制流进入 ucore 的 __alltraps。在终端3中继续执行，可以看到：__alltraps首先调用SAVE_ALL保存中断帧，然后调用 trap -> trap_dispatch -> exception_handler -> syscall。此时 ucore 的 exception_handler 会识别 CAUSE_USER_ECALL，执行 `tf->epc += 4`，保证 sret 返回用户态后不会再次执行同一条 ecall；然后执行syscall()，从 current->tf 中取出a0的系统调用号，分发到 sys_putc 等函数，并把返回值写回 tf->gpr.a0。
+
+<!-- 此处有截图 -->
+
+4. 调试sret
+
+（1）系统调用处理完成后，控制流会回到 __trapret。在终端3中设置断点：
+
+```gdb
+break __trapret
+continue
+```
+
+此时gdb应该会停在sret之前，可以用以下指令观察参数：
+
+```gdb
+p/x $pc
+p/x $sepc
+p/x $sstatus
+```
+
+此时 sepc 已经被 RESTORE_ALL 设置为 ecall 的下一条指令；sstatus.SPP 为 0，表示接下来要返回 U 态。
+
+<!-- 此处有截图 -->
+
+（2）回到终端2，在 QEMU 侧设置 sret 相关断点：
+
+```gdb
+break helper_sret
+continue
+```
+
+然后在终端3继续执行到sret，终端2中qemu的gdb会停在helper_sret中。查看：
+
+```gdb
+p/x env->pc
+p/x env->sepc
+p env->priv
+p/x env->mstatus
+```
+
+继续单步调试，可以看到 QEMU 模拟sret的过程，包括：读取 sstatus.SPP；因为 SPP = 0，目标特权级为 U；pc = sepc；SIE = SPIE；SPIE = 1；SPP = 0；返回用户态，继续执行 ecall 的下一条指令。此时一次完整的系统调用流程就走完了。
+
+<!-- 此处有截图 -->
+
+（3）观察结束后，删除 qemu 侧和 ucore 侧的临时断点，避免后续执行被反复打断：
+
+```gdb
+delete breakpoints
+continue
+```
+
+#### 关键问题
+
+1. 观察一下ecall指令和sret指令是如何被qemu处理的，并简单阅读一下调试中涉及到的qemu源码，解释其中的关键流程。
+2. 在执行ecall和sret这类汇编指令的时候，qemu进行了很关键的一步——指令翻译（TCG Translation），了解一下这个功能，思考一下另一个双重gdb调试的实验是否也涉及到了一些相关的内容。
+3. 记录下你调试过程中比较抓马有趣的细节，以及在观察模拟器通过软件模拟硬件执行的时候了解到的知识。
+4. 记录实验过程中，有哪些通过大模型解决的问题，记录下当时的情景，你的思路，以及你和大模型交互的过程。
 
 ---
 
